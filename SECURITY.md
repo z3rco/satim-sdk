@@ -82,7 +82,7 @@ In practice, this risk is mitigated because these URLs are sent **to the SATIM g
 
 The HTTP client retries transient errors (5xx responses and timeouts) up to 2 times with exponential backoff and jitter. This prevents a single transient failure from breaking a payment flow while avoiding accidental gateway overload.
 
-**Registration endpoints** (`/register.do`, `/registerPreAuth.do`) are **never retried**, since they are non-idempotent operations. Retrying a registration after a timeout could result in duplicate orders (ErrorCode 1).
+**Registration endpoints** (`/register.do`, `/registerPreAuth.do`) are **only retried when an idempotency key is set** (via `idempotencyKey()` or automatically by `safeRegister()`/`safeRegisterPreAuth()`). Without an idempotency key, retrying a registration after a timeout could result in duplicate orders (ErrorCode 1).
 
 Set `maxRetries: 0` when constructing `HttpClientService` to disable retries for all endpoints if needed.
 
