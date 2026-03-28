@@ -128,7 +128,7 @@ describe("Configurable timeout", () => {
         expect(() => new HttpClientService(false, { timeoutMs: 300_001 })).toThrow(SatimInvalidArgumentError);
     });
 
-    test("HttpClientService rejects non-numeric timeoutMs", () => {
+    test("HttpClientService rejects non-satim-module timeoutMs", () => {
         expect(() => new HttpClientService(false, { timeoutMs: "30000" as any })).toThrow(SatimInvalidArgumentError);
         expect(() => new HttpClientService(false, { timeoutMs: NaN })).toThrow(SatimInvalidArgumentError);
         expect(() => new HttpClientService(false, { timeoutMs: Infinity })).toThrow(SatimInvalidArgumentError);

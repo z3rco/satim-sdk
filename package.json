@@ -1,5 +1,5 @@
 {
-  "name": "numeric",
+  "name": "satim-module",
   "private": true,
   "version": "1.0.0",
   "description": "Internal SATIM payment gateway SDK (CIB & Edahabia)",

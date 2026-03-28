@@ -234,7 +234,7 @@ stateDiagram-v2
 Handling circuit-open errors in your application:
 
 ```typescript
-import { SatimUnexpectedResponseError } from "numeric";
+import { SatimUnexpectedResponseError } from "satim-module";
 
 try {
     const payment = await satim.amount(1500).returnUrl(url).register();

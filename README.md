@@ -18,7 +18,7 @@ Supports **CIB** and **Edahabia** card payments through the official SATIM REST 
 ## Quick Start
 
 ```typescript
-import { Satim } from "numeric";
+import { Satim } from "satim-module";
 
 const satim = new Satim({
     username: process.env.SATIM_USERNAME,
@@ -127,7 +127,7 @@ Available on `RegisterResponse` or `ConfirmResponse` objects:
 All errors extend `SatimError` for unified catching:
 
 ```typescript
-import { SatimError, SatimGatewayError } from "numeric";
+import { SatimError, SatimGatewayError } from "satim-module";
 
 try {
     await satim.register();
@@ -169,7 +169,7 @@ Detailed guides are available in [`docs/`](docs/):
 ## Architecture
 
 ```
-numeric/
+satim-module/
 ├── src/
 │   ├── Satim.ts        # Main client class
 │   ├── config.ts       # Configuration and fluent setters

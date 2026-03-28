@@ -343,10 +343,10 @@ export class SatimConfig {
     /**
      * Set a custom order number.
      *
-     * Per the SATIM spec, `orderNumber` is AN.10 (alphanumeric, max 10 characters).
-     * If not set, a random 10-character numeric string is generated automatically.
+     * Per the SATIM spec, `orderNumber` is AN.10 (alphasatim-module, max 10 characters).
+     * If not set, a random 10-character satim-module string is generated automatically.
      *
-     * Accepts either a string (up to 10 alphanumeric chars) or a number
+     * Accepts either a string (up to 10 alphasatim-module chars) or a number
      * (converted to string, must fit within 10 digits).
      *
      * @throws SatimInvalidArgumentError if the value is empty, too long, or contains invalid characters.
@@ -355,7 +355,7 @@ export class SatimConfig {
         const str = String(orderNumber);
         if (!str || !/^[a-zA-Z0-9]{1,10}$/.test(str)) {
             throw new SatimInvalidArgumentError(
-                "Order number must be 1-10 alphanumeric characters (SATIM AN.10).",
+                "Order number must be 1-10 alphasatim-module characters (SATIM AN.10).",
             );
         }
         const clone = this.clone();
@@ -394,11 +394,11 @@ export class SatimConfig {
     /**
      * Add a single user-defined key/value pair to the payment metadata.
      * These are forwarded inside the `jsonParams` object.
-     * @throws SatimInvalidArgumentError if the key is a numeric string, empty, or a reserved key.
+     * @throws SatimInvalidArgumentError if the key is a satim-module string, empty, or a reserved key.
      */
     public userDefinedField(key: string, value: string): this {
         if (!key || /^\d+$/.test(key)) {
-            throw new SatimInvalidArgumentError("User defined field key must be a non-empty, non-numeric string.");
+            throw new SatimInvalidArgumentError("User defined field key must be a non-empty, non-satim-module string.");
         }
         if (key.length > 128) {
             throw new SatimInvalidArgumentError("User defined field key must not exceed 128 characters.");
@@ -456,7 +456,7 @@ export class SatimConfig {
      * a new order. This also enables automatic retries on `register()` and
      * `registerPreAuth()` since retrying is now safe.
      *
-     * @param key - Unique string (1-128 chars, alphanumeric/hyphens/underscores).
+     * @param key - Unique string (1-128 chars, alphasatim-module/hyphens/underscores).
      *              Use `deriveIdempotencyKey()` to generate deterministic keys from
      *              your internal order reference.
      * @throws SatimInvalidArgumentError if the key format is invalid.
@@ -464,7 +464,7 @@ export class SatimConfig {
     public idempotencyKey(key: string): this {
         if (!key || !/^[a-zA-Z0-9_\-]{1,128}$/.test(key)) {
             throw new SatimInvalidArgumentError(
-                "Idempotency key must be 1-128 characters, alphanumeric, hyphens, or underscores.",
+                "Idempotency key must be 1-128 characters, alphasatim-module, hyphens, or underscores.",
             );
         }
         const clone = this.clone();

@@ -101,7 +101,7 @@ export class Satim extends SatimConfig {
             throw new SatimInvalidArgumentError(`Order ID is required for ${context}`);
         }
         if (orderId.length > 128 || !/^[a-zA-Z0-9\-]+$/.test(orderId)) {
-            throw new SatimInvalidArgumentError(`Invalid order ID format for ${context}. Must be alphanumeric/hyphens, max 128 chars.`);
+            throw new SatimInvalidArgumentError(`Invalid order ID format for ${context}. Must be alphasatim-module/hyphens, max 128 chars.`);
         }
     }
 

@@ -52,7 +52,7 @@ if (response.isRefunded()) {
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `orderId` | `string` | Yes | The order identifier returned by `register()` when the original payment was created. Must be a string (not a number or array), alphanumeric + hyphens, 1–128 characters. |
+| `orderId` | `string` | Yes | The order identifier returned by `register()` when the original payment was created. Must be a string (not a number or array), alphasatim-module + hyphens, 1–128 characters. |
 | `amount` | `number` | Yes | The refund amount in **major currency units** (e.g., dinars, not centimes). The SDK converts to minor units (centimes) automatically. |
 
 ### Amount validation

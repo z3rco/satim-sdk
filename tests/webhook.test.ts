@@ -86,7 +86,7 @@ describe("WebhookHandler - orderId extraction", () => {
         expect(result!.orderId).toBe("obj-order-1");
     });
 
-    test("extracts orderId from object with numeric orderId", async () => {
+    test("extracts orderId from object with satim-module orderId", async () => {
         const result = await handler.verify({ orderId: 12345 });
         expect(result).not.toBeNull();
         expect(result!.orderId).toBe("12345");

@@ -153,7 +153,7 @@ describe("getAmount — minor-to-major round trip", () => {
         }
     });
 
-    test("rejects non-numeric, negative, zero, and fractional amounts", () => {
+    test("rejects non-satim-module, negative, zero, and fractional amounts", () => {
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "INVALID" } as any).getAmount()).toBeUndefined();
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "-100" } as any).getAmount()).toBeUndefined();
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "0" } as any).getAmount()).toBeUndefined();

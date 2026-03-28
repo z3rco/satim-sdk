@@ -72,13 +72,13 @@ Every setter method returns a new `Satim` instance (the fluent interface is immu
 | `failUrl(url)` | `string` | Same as `returnUrl` | Where to redirect on failure. If not set, SATIM uses the `returnUrl` for all outcomes. Providing a separate fail URL lets you show a different page for failed payments. |
 | `description(text)` | `string` | None | Human-readable text displayed on the SATIM payment page. Maximum 598 characters. Must not contain HTML markup characters (`<` or `>`). |
 | `language(lang)` | `"FR"`, `"AR"`, or `"EN"` | `"FR"` | The language of the SATIM hosted payment page. |
-| `orderNumber(n)` | `string \| number` | Random 10-char numeric | A custom order number. Per the SATIM spec this is AN.10 — alphanumeric, 1–10 characters (e.g., `"403"`, `"INV12345"`, `9999999999`). Numbers are auto-converted to strings. If you don't set this, the SDK generates a cryptographically random 10-digit numeric string. If you re-use a value that was already registered, SATIM returns an error (ErrorCode 1). |
+| `orderNumber(n)` | `string \| number` | Random 10-char satim-module | A custom order number. Per the SATIM spec this is AN.10 — alphasatim-module, 1–10 characters (e.g., `"403"`, `"INV12345"`, `9999999999`). Numbers are auto-converted to strings. If you don't set this, the SDK generates a cryptographically random 10-digit satim-module string. If you re-use a value that was already registered, SATIM returns an error (ErrorCode 1). |
 | `timeout(seconds)` | `number` | Gateway default | How long (in seconds) the payment session remains valid before expiring. Range: 600 (10 minutes) to 86,400 (24 hours). If the customer does not complete payment within this time, the session expires and `isExpired()` returns true on the confirmation response. |
-| `currency(code)` | `"DZD"`, `"USD"`, or `"EUR"` | `"DZD"` | The payment currency. Mapped to ISO 4217 numeric codes internally: DZD = 012, USD = 840, EUR = 978. |
-| `userDefinedField(key, value)` | Two `string` args | None | Add a single custom key-value pair to the payment metadata. The key must be non-empty, non-numeric, not a reserved key, and max 128 characters. The value must be max 20 characters (SATIM AN.20 limit). Forwarded inside the `jsonParams` object. |
+| `currency(code)` | `"DZD"`, `"USD"`, or `"EUR"` | `"DZD"` | The payment currency. Mapped to ISO 4217 satim-module codes internally: DZD = 012, USD = 840, EUR = 978. |
+| `userDefinedField(key, value)` | Two `string` args | None | Add a single custom key-value pair to the payment metadata. The key must be non-empty, non-satim-module, not a reserved key, and max 128 characters. The value must be max 20 characters (SATIM AN.20 limit). Forwarded inside the `jsonParams` object. |
 | `userDefinedFields(fields)` | `Record<string, string>` | None | Batch version of `userDefinedField()`. Validates each pair individually. |
 | `dynamicCallbackUrl(url)` | `string` | None | A server-to-server webhook URL. SATIM POSTs a notification to this URL when the order status changes, independently of the customer redirect. See [Advanced Features](06-advanced-features.md) for details. |
-| `idempotencyKey(key)` | `string` | None | An idempotency key for safe retries. 1–128 characters, alphanumeric plus hyphens and underscores. When set, SATIM returns the same response for duplicate requests instead of creating a new order. Also enables automatic retries on `register()`. See the idempotency section below. |
+| `idempotencyKey(key)` | `string` | None | An idempotency key for safe retries. 1–128 characters, alphasatim-module plus hyphens and underscores. When set, SATIM returns the same response for duplicate requests instead of creating a new order. Also enables automatic retries on `register()`. See the idempotency section below. |
 
 ---
 
@@ -178,7 +178,7 @@ const orderId = payment.getOrderId(); // Same orderId every time for "cart-abc-1
 ### How it works internally
 
 1. **Derives an idempotency key:** Computes `SHA-256("register|cart-abc-123|1500|012")` and prefixes it with `dk_`. This key is sent to SATIM as `externalRequestId`.
-2. **Derives a stable order number:** Computes a deterministic 10-character numeric string from the merchant ref. Same ref always gets the same order number.
+2. **Derives a stable order number:** Computes a deterministic 10-character satim-module string from the merchant ref. Same ref always gets the same order number.
 3. **Enables retries:** Because the idempotency key guarantees deduplication on the gateway side, retries are safe. The SDK automatically enables them.
 4. **Handles duplicates:** If SATIM returns ErrorCode "1" (order already registered), the SDK throws a `SatimDuplicateOrderError` with the `merchantRef` so you can look up the original orderId.
 
@@ -225,7 +225,7 @@ import {
     SatimGatewayError,
     SatimUnexpectedResponseError,
     SatimDuplicateOrderError,
-} from "numeric";
+} from "satim-module";
 
 try {
     const payment = await satim

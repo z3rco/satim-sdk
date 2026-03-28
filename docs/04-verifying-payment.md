@@ -104,7 +104,7 @@ Each call to `verify()` executes the following pipeline in order. If any step re
 
 | Step | What happens | Rejection behavior |
 |---|---|---|
-| **1. Extract orderId** | Parses the orderId from whichever input format was provided (see "Input formats" below). Validates format: alphanumeric + hyphens, 1–128 characters. | Returns `null` if the orderId is missing, empty, or fails the format check. |
+| **1. Extract orderId** | Parses the orderId from whichever input format was provided (see "Input formats" below). Validates format: alphasatim-module + hyphens, 1–128 characters. | Returns `null` if the orderId is missing, empty, or fails the format check. |
 | **2. Rate limit** | Checks a sliding-window rate limiter. Default: 100 callbacks per 60-second window. Prevents callback flooding attacks. | Returns `null` if the rate limit is exceeded. |
 | **3. In-flight lock** | Checks whether another `verify()` call for the same orderId is already in progress. This prevents a race condition where two concurrent calls both pass the duplicate check before either marks the order as processed — which would cause double-fulfillment. | If another call is in-flight, waits for it to complete, then returns the result as a duplicate. |
 | **4. Duplicate check** | Calls your `onCheckDuplicate` function (or checks the in-memory `Set` fallback) to determine whether this orderId has already been processed. | If duplicate, still calls `confirm()` to get the latest state, but returns `{ duplicate: true }`. |
@@ -125,7 +125,7 @@ The `verify()` method accepts any of the following input formats. It figures out
 | Web API `Request` object | `request` | The `request.url` is parsed, `orderId` extracted from query parameters |
 | URL string starting with `?` | `"?orderId=abc-123"` | Parsed as a query string |
 
-> **OrderId format:** Only alphanumeric characters and hyphens are accepted. Maximum 128 characters. Anything else is silently rejected (returns `null`) without making a gateway call. This prevents injection attacks through malformed orderIds.
+> **OrderId format:** Only alphasatim-module characters and hyphens are accepted. Maximum 128 characters. Anything else is silently rejected (returns `null`) without making a gateway call. This prevents injection attacks through malformed orderIds.
 
 ---
 
@@ -156,7 +156,7 @@ However, in **multi-instance** deployments — Kubernetes pods, Heroku dynos, PM
 The SDK warns you about this at construction time by emitting a `console.warn`:
 
 ```
-[numeric] WebhookHandler: using in-memory duplicate tracking. This is only safe for
+[satim-module] WebhookHandler: using in-memory duplicate tracking. This is only safe for
 single-process deployments. In multi-instance environments (Kubernetes, multiple dynos,
 serverless) provide onCheckDuplicate and onMarkProcessed backed by a shared store (e.g.
 Redis, your database). Set suppressMultiInstanceWarning: true to silence this warning.
@@ -287,7 +287,7 @@ Both `orderId` and `expectedAmount` are validated with runtime type guards:
 
 | Parameter | Validation | Error on invalid |
 |---|---|---|
-| `orderId` | Must be a `string` (not a number, array, or object). Must be non-empty, alphanumeric + hyphens, max 128 chars. | `SatimInvalidArgumentError` with a message describing the actual type received (e.g., `"got number"`) |
+| `orderId` | Must be a `string` (not a number, array, or object). Must be non-empty, alphasatim-module + hyphens, max 128 chars. | `SatimInvalidArgumentError` with a message describing the actual type received (e.g., `"got number"`) |
 | `expectedAmount` | Must be a JavaScript `number` type (not an array, string, boolean, or object). Must be positive, finite, max 2 decimal places, within safe precision range. | `SatimInvalidArgumentError` with a message describing the actual type received (e.g., `"got array"`) |
 
 > **Why runtime type checks?** In plain JavaScript, or when values come from HTTP request bodies (`req.body.amount`), TypeScript's compile-time checks are bypassed. For example, `Number([100]) === 100` in JavaScript — an array silently coerces to a number. The SDK catches this at runtime with an explicit `typeof` guard and a clear error message.
@@ -382,7 +382,7 @@ The `ConfirmResponse` object provides typed accessor methods for common response
 | `getCardExpiry()` | `string \| undefined` | The card expiration date in `YYYYMM` format (e.g., `"202712"` for December 2027). |
 | `getCardPan()` | `string \| undefined` | The masked card PAN (e.g., `"4111**1111"`). Only partial digits are returned by SATIM — the full PAN is never exposed. |
 | `getApprovalCode()` | `string \| undefined` | The authorization approval code from the card issuer. Present on successful transactions. |
-| `getAmount()` | `number \| undefined` | The original order amount converted from minor units (centimes) back to major units (dinars). Returns `undefined` if the field is absent or non-numeric. |
+| `getAmount()` | `number \| undefined` | The original order amount converted from minor units (centimes) back to major units (dinars). Returns `undefined` if the field is absent or non-satim-module. |
 | `getDepositAmount()` | `number \| undefined` | The actual debited (deposited) amount in major units. For standard payments, this equals `getAmount()`. For pre-authorization flows, it may be less than the original hold amount if a partial capture was performed. Returns `undefined` if the field is absent. |
 | `getOrderNumber()` | `string \| undefined` | The order number as confirmed by the gateway. |
 | `getSuccessMessage()` | `string` | A human-readable success or status message. Returns the gateway's `respCode_desc` or `actionCodeDescription` if available, otherwise a default like `"Payment was successful"` or `"Payment is pending"`. |

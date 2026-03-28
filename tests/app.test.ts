@@ -235,7 +235,7 @@ describe("Satim - credential redaction", () => {
 describe("Satim - userDefinedField key validation", () => {
     const make = () => new Satim({ username: "u", password: "p", terminalId: "t" });
 
-    test("rejects purely numeric keys", () => {
+    test("rejects purely satim-module keys", () => {
         expect(() => make().userDefinedField("123", "val")).toThrow(SatimInvalidArgumentError);
         expect(() => make().userDefinedField("0", "val")).toThrow(SatimInvalidArgumentError);
     });
@@ -268,7 +268,7 @@ describe("Satim - clone() credential isolation", () => {
 });
 
 describe("Satim - NaN amount handling", () => {
-    test("confirm rejects non-numeric gateway amount via verifyAmount on success", async () => {
+    test("confirm rejects non-satim-module gateway amount via verifyAmount on success", async () => {
         const satim = new Satim({ username: "u", password: "p", terminalId: "t" });
         const mockRequest = vi.fn(async () => ({
             OrderStatus: "2",
@@ -289,7 +289,7 @@ describe("Satim - NaN amount handling", () => {
         expect(response.isPending()).toBe(true);
     });
 
-    test("getAmount returns undefined for non-numeric gateway values", async () => {
+    test("getAmount returns undefined for non-satim-module gateway values", async () => {
         const { ConfirmResponse } = await import("../src/responses");
         const response = new ConfirmResponse({ OrderStatus: "2", Amount: "INVALID" } as any);
         expect(response.getAmount()).toBeUndefined();

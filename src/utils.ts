@@ -83,7 +83,7 @@ export function deriveIdempotencyKey(params: {
 }
 
 /**
- * Derive a deterministic order number (up to 10 alphanumeric chars) from a merchant reference.
+ * Derive a deterministic order number (up to 10 alphasatim-module chars) from a merchant reference.
  *
  * Used by `safeRegister()` to ensure retries use the same order number.
  * Takes the first 9 hex digits of a SHA-256 hash, converts to decimal,
@@ -91,7 +91,7 @@ export function deriveIdempotencyKey(params: {
  *
  * @param merchantRef - Your internal order/cart/invoice ID.
  * @param currency - ISO currency code (for domain separation).
- * @returns A stable 10-character numeric order number string.
+ * @returns A stable 10-character satim-module order number string.
  */
 export function deriveOrderNumber(merchantRef: string, currency: string = "012", mode: "register" | "preauth" = "register"): string {
     const { createHash } = require("node:crypto") as typeof import("node:crypto");

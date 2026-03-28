@@ -25,7 +25,7 @@ These credentials are sent with **every API request** to SATIM. If any of them a
 ### Production
 
 ```typescript
-import { Satim } from "numeric";
+import { Satim } from "satim-module";
 
 const satim = new Satim({
     username: process.env.SATIM_USERNAME,
@@ -180,7 +180,7 @@ stateDiagram-v2
 When the circuit is open, you should return a user-friendly error immediately rather than waiting:
 
 ```typescript
-import { SatimUnexpectedResponseError } from "numeric";
+import { SatimUnexpectedResponseError } from "satim-module";
 
 try {
     const payment = await satim

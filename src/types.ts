@@ -7,7 +7,7 @@
 export type Language = "FR" | "AR" | "EN";
 
 /**
- * ISO 4217 numeric currency codes supported by the SATIM gateway.
+ * ISO 4217 satim-module currency codes supported by the SATIM gateway.
  * - 012: Algerian Dinar (DZD)
  * - 840: US Dollar (USD)
  * - 978: Euro (EUR)

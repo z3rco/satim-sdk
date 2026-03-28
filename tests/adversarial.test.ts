@@ -66,7 +66,7 @@ describe("1. Type coercion attacks", () => {
 
     test("amount() with array [100] — JS coerces to number 100", () => {
         const satim = makeSatim();
-        // [100] coerces to 100 in numeric context: Number([100]) === 100
+        // [100] coerces to 100 in satim-module context: Number([100]) === 100
         // But isFinite([100]) might be true because it coerces
         const arr = [100] as any;
         // This might NOT throw because JS is weird: Number([100]) === 100
@@ -307,7 +307,7 @@ describe("3. Regex bypass attacks", () => {
         expect(response.getAmount()).toBe(19.99);
     });
 
-    test("orderNumber — accepts alphanumeric strings up to 10 chars", () => {
+    test("orderNumber — accepts alphasatim-module strings up to 10 chars", () => {
         const satim = makeSatim();
         expect(() => satim.orderNumber("ABC123")).not.toThrow();
         expect(() => satim.orderNumber("403")).not.toThrow();
@@ -337,19 +337,19 @@ describe("3. Regex bypass attacks", () => {
         expect(() => satim.orderNumber(10_000_000_000)).toThrow(SatimInvalidArgumentError);
     });
 
-    test("userDefinedField — numeric string key rejected by /^\\d+$/", () => {
+    test("userDefinedField — satim-module string key rejected by /^\\d+$/", () => {
         const satim = makeSatim();
         expect(() => satim.userDefinedField("123", "val")).toThrow(SatimInvalidArgumentError);
     });
 
-    test("userDefinedField — numeric-looking key with leading zero", () => {
+    test("userDefinedField — satim-module-looking key with leading zero", () => {
         const satim = makeSatim();
         expect(() => satim.userDefinedField("0123", "val")).toThrow(SatimInvalidArgumentError);
     });
 
     test("userDefinedField — key with space + digits should pass", () => {
         const satim = makeSatim();
-        // " 123" has a space, so /^\d+$/ fails — it passes the numeric check
+        // " 123" has a space, so /^\d+$/ fails — it passes the satim-module check
         expect(() => satim.userDefinedField(" 123", "val")).not.toThrow();
     });
 
@@ -1262,7 +1262,7 @@ describe("10. Error handling", () => {
         expect(() => new RegisterResponse({ orderId: "abc" } as any)).toThrow(SatimUnexpectedResponseError);
     });
 
-    test("validateRegisterSchema rejects numeric errorCode", () => {
+    test("validateRegisterSchema rejects satim-module errorCode", () => {
         expect(() => new RegisterResponse({
             orderId: "abc",
             formUrl: "https://test.satim.dz/form",

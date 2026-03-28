@@ -1,12 +1,12 @@
 # Installation
 
-This guide walks you through installing the **Numeric** SDK and getting your environment ready to accept payments through the SATIM interbank gateway.
+This guide walks you through installing the **satim-module** SDK and getting your environment ready to accept payments through the SATIM interbank gateway.
 
 ---
 
 ## What you're installing
 
-**Numeric** is a TypeScript SDK that wraps the SATIM REST API — the payment gateway used by Algerian banks (CIB network). It handles authentication, request formatting, retries, error parsing, and payment verification so your application only needs to deal with business logic.
+**satim-module** is a TypeScript SDK that wraps the SATIM REST API — the payment gateway used by Algerian banks (CIB network). It handles authentication, request formatting, retries, error parsing, and payment verification so your application only needs to deal with business logic.
 
 The package has **zero runtime dependencies**. Everything it needs (HTTP, cryptography, URL parsing) is available in the JavaScript runtimes it supports.
 
@@ -34,19 +34,19 @@ Run the command for your package manager:
 
 ```bash
 # npm
-npm install numeric
+npm install satim-module
 
 # yarn
-yarn add numeric
+yarn add satim-module
 
 # pnpm
-pnpm add numeric
+pnpm add satim-module
 
 # bun
-bun add numeric
+bun add satim-module
 ```
 
-This adds `numeric` to your `dependencies` and downloads the package to `node_modules/`. The package ships pre-compiled JavaScript alongside TypeScript declaration files (`.d.ts`), so no build step is required on your end.
+This adds `satim-module` to your `dependencies` and downloads the package to `node_modules/`. The package ships pre-compiled JavaScript alongside TypeScript declaration files (`.d.ts`), so no build step is required on your end.
 
 ---
 
@@ -55,7 +55,7 @@ This adds `numeric` to your `dependencies` and downloads the package to `node_mo
 After installing, confirm the package is available by importing the main class:
 
 ```typescript
-import { Satim } from "numeric";
+import { Satim } from "satim-module";
 
 console.log(typeof Satim); // "function"
 ```
@@ -66,7 +66,7 @@ If this runs without errors, the installation was successful.
 
 ## What gets exported
 
-The `numeric` package exports everything you need through a single entry point:
+The `satim-module` package exports everything you need through a single entry point:
 
 ```typescript
 import {
@@ -95,7 +95,7 @@ import {
     type WebhookResult,
     type HttpClientOptions,
     type CircuitBreakerOptions,
-} from "numeric";
+} from "satim-module";
 ```
 
 You do not need to import all of these. Most applications only need `Satim` and a few error classes.

@@ -139,7 +139,7 @@ class SlidingWindowRateLimiter {
 
 // ─── Order ID extraction ────────────────────────────────────────────────
 
-/** Strict orderId format: alphanumeric + hyphens, 1–128 chars. */
+/** Strict orderId format: alphasatim-module + hyphens, 1–128 chars. */
 const ORDER_ID_PATTERN = /^[a-zA-Z0-9\-]{1,128}$/;
 
 /**
@@ -258,7 +258,7 @@ export class WebhookHandler {
         const usingInMemoryFallback = !options.onCheckDuplicate && !options.onMarkProcessed;
         if (usingInMemoryFallback && !options.suppressMultiInstanceWarning) {
             console.warn(
-                "[numeric] WebhookHandler: using in-memory duplicate tracking. " +
+                "[satim-module] WebhookHandler: using in-memory duplicate tracking. " +
                 "This is only safe for single-process deployments. " +
                 "In multi-instance environments (Kubernetes, multiple dynos, serverless) " +
                 "provide onCheckDuplicate and onMarkProcessed backed by a shared store " +

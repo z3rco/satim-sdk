@@ -73,7 +73,7 @@ describe("deriveIdempotencyKey", () => {
 // ─── deriveOrderNumber ──────────────────────────────────────────────
 
 describe("deriveOrderNumber", () => {
-    test("produces deterministic 10-char numeric string", () => {
+    test("produces deterministic 10-char satim-module string", () => {
         const a = deriveOrderNumber("cart-1");
         const b = deriveOrderNumber("cart-1");
         expect(a).toBe(b);

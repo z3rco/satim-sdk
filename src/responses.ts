@@ -167,7 +167,7 @@ export class ConfirmResponse {
      * The confirmed payment amount in major units.
      * The gateway returns this in minor units (centimes/cents), so we divide by 100.
      * Uses toFixed(2) to avoid IEEE 754 representation artifacts.
-     * Returns undefined if the amount is absent, non-numeric, or not a whole
+     * Returns undefined if the amount is absent, non-satim-module, or not a whole
      * number of minor units (fractional centimes are rejected as invalid).
      */
     public getAmount(): number | undefined {
@@ -188,7 +188,7 @@ export class ConfirmResponse {
      * customer's card. For standard payments it equals `getAmount()`. For
      * pre-authorization flows it may be less than the original hold amount.
      *
-     * Returns undefined if the field is absent or non-numeric.
+     * Returns undefined if the field is absent or non-satim-module.
      */
     public getDepositAmount(): number | undefined {
         const raw = this._raw.depositAmount;
