@@ -1,0 +1,34 @@
+{
+  "name": "numeric",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Internal SATIM payment gateway SDK (CIB & Edahabia)",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^4.1.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "[COMPANY]",
+  "license": "UNLICENSED"
+}
