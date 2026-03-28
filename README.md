@@ -1,4 +1,4 @@
-# NUMERIC
+# satim-module
 
 > *"Ancient engineers built invisible channels that moved water across the Sahara with no pumps, no friction. We do the same with payments."*
 
