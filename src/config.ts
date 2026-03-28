@@ -75,6 +75,12 @@ function normalizeIpv6(hostname: string): string | null {
 }
 
 /**
+ * Module-private Set caching URLs that have already passed SSRF validation.
+ * Avoids re-running 21+ regex patterns for the same URL within a process lifetime.
+ */
+const _validatedUrls = new Set<string>();
+
+/**
  * Module-private WeakMap storing merchant credentials.
  *
  * This prevents credential leakage via `Object.getOwnPropertyDescriptor()`,
@@ -167,6 +173,8 @@ export class SatimConfig {
     }
 
     private validateUrlScheme(urlStr: string, errorMessage: string): void {
+        if (_validatedUrls.has(urlStr)) return;
+
         let parsed: URL;
         try {
             parsed = new URL(urlStr);
@@ -202,6 +210,8 @@ export class SatimConfig {
                 `${errorMessage} URLs pointing to private/reserved IPv6 ranges are not allowed.`,
             );
         }
+
+        _validatedUrls.add(urlStr);
     }
 
     /**

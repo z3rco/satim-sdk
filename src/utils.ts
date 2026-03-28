@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Maximum amount in major units that `toPrecision(12)` can convert
  * without losing centime-level accuracy. Above this threshold the
@@ -52,6 +54,19 @@ export function isWholeMinorUnits(minorUnits: number): boolean {
  * @returns The amount in minor units (centimes/cents), rounded to the nearest integer.
  * @throws {SatimInvalidArgumentError} if the amount is invalid.
  */
+export function toMinorUnits(amount: number): number {
+    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
+        throw new Error("toMinorUnits: amount must be a finite positive number.");
+    }
+    if (amount > MAX_SAFE_AMOUNT) {
+        throw new Error("toMinorUnits: amount exceeds MAX_SAFE_AMOUNT.");
+    }
+    if (hasSubCentimePrecision(amount)) {
+        throw new Error("toMinorUnits: amount must not have more than 2 decimal places.");
+    }
+    return Math.round(parseFloat((amount * 100).toPrecision(12)));
+}
+
 /**
  * Derive a deterministic idempotency key from payment parameters.
  *
@@ -75,7 +90,6 @@ export function deriveIdempotencyKey(params: {
     if (!Number.isFinite(params.amount) || params.amount <= 0) {
         throw new Error("deriveIdempotencyKey: amount must be a finite positive number.");
     }
-    const { createHash } = require("node:crypto") as typeof import("node:crypto");
     const mode = params.mode ?? "register";
     const input = `${mode}|${params.merchantRef.trim()}|${params.amount}|${params.currency ?? "012"}`;
     const hash = createHash("sha256").update(input).digest("hex");
@@ -94,23 +108,9 @@ export function deriveIdempotencyKey(params: {
  * @returns A stable 10-character satim-module order number string.
  */
 export function deriveOrderNumber(merchantRef: string, currency: string = "012", mode: "register" | "preauth" = "register"): string {
-    const { createHash } = require("node:crypto") as typeof import("node:crypto");
     const input = `ordnum|${mode}|${merchantRef.trim()}|${currency}`;
     const hash = createHash("sha256").update(input).digest("hex");
     // Take first 12 hex chars (48 bits) → parse as int → map to 10-digit range
     const raw = parseInt(hash.slice(0, 12), 16);
     return String(1_000_000_000 + (raw % 9_000_000_000));
-}
-
-export function toMinorUnits(amount: number): number {
-    if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {
-        throw new Error("toMinorUnits: amount must be a finite positive number.");
-    }
-    if (amount > MAX_SAFE_AMOUNT) {
-        throw new Error("toMinorUnits: amount exceeds MAX_SAFE_AMOUNT.");
-    }
-    if (hasSubCentimePrecision(amount)) {
-        throw new Error("toMinorUnits: amount must not have more than 2 decimal places.");
-    }
-    return Math.round(parseFloat((amount * 100).toPrecision(12)));
 }

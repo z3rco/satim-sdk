@@ -73,7 +73,7 @@ export class RegisterResponse {
 
     constructor(raw: RegisterOrderResponse) {
         validateRegisterSchema(raw);
-        this._raw = structuredClone(raw);
+        this._raw = { ...raw };
     }
 
     /** Extract the order ID from the registration response. */
@@ -125,7 +125,7 @@ export class RegisterResponse {
      * Use this for debugging; prefer typed accessor methods for business logic.
      */
     public getRawResponse(): RegisterOrderResponse {
-        return structuredClone(this._raw);
+        return { ...this._raw };
     }
 }
 
@@ -133,7 +133,7 @@ export class ConfirmResponse {
     private readonly _raw: ConfirmOrderResponse;
 
     constructor(raw: ConfirmOrderResponse) {
-        const cloned = structuredClone(raw);
+        const cloned = { ...raw };
         validateConfirmSchema(cloned);
         this._raw = cloned;
     }
@@ -438,7 +438,7 @@ export class ConfirmResponse {
      * Use this for debugging; prefer typed accessor methods for business logic.
      */
     public getRawResponse(): Record<string, unknown> {
-        const copy: Record<string, unknown> = structuredClone(this._raw);
+        const copy: Record<string, unknown> = { ...this._raw };
         // Redact sensitive cardholder data
         if (copy.Ip !== undefined) copy.Ip = "[REDACTED]";
         if (copy.Pan !== undefined) copy.Pan = "[REDACTED]";

@@ -98,6 +98,7 @@ export interface WebhookHandlerOptions {
 
 class SlidingWindowRateLimiter {
     private timestamps: number[] = [];
+    private head: number = 0;
     private readonly maxRequests: number;
     private readonly windowMs: number;
 
@@ -108,27 +109,30 @@ class SlidingWindowRateLimiter {
 
     /**
      * Returns true if the request is allowed, false if rate limited.
-     * Prunes expired timestamps on each check.
+     * Prunes expired timestamps on each check using a head pointer to
+     * avoid O(n) array allocations.
      */
     check(): boolean {
         const now = Date.now();
         const cutoff = now - this.windowMs;
 
         // Binary search for the first timestamp within the window
-        let lo = 0;
+        let lo = this.head;
         let hi = this.timestamps.length;
         while (lo < hi) {
             const mid = (lo + hi) >>> 1;
             if (this.timestamps[mid] <= cutoff) lo = mid + 1;
             else hi = mid;
         }
+        this.head = lo;
 
-        // Prune expired entries
-        if (lo > 0) {
-            this.timestamps = this.timestamps.slice(lo);
+        // Periodically compact the array to reclaim memory
+        if (this.head > 1000) {
+            this.timestamps = this.timestamps.slice(this.head);
+            this.head = 0;
         }
 
-        if (this.timestamps.length >= this.maxRequests) {
+        if (this.timestamps.length - this.head >= this.maxRequests) {
             return false;
         }
 
