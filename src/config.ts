@@ -74,10 +74,7 @@ function normalizeIpv6(hostname: string): string | null {
     return null;
 }
 
-/**
- * Module-private Set caching URLs that have already passed SSRF validation.
- * Avoids re-running 21+ regex patterns for the same URL within a process lifetime.
- */
+const MAX_VALIDATED_URL_CACHE_SIZE = 512;
 const _validatedUrls = new Set<string>();
 
 /**
@@ -211,6 +208,10 @@ export class SatimConfig {
             );
         }
 
+        // Evict oldest entry when the cache is full
+        if (_validatedUrls.size >= MAX_VALIDATED_URL_CACHE_SIZE) {
+            _validatedUrls.delete(_validatedUrls.values().next().value!);
+        }
         _validatedUrls.add(urlStr);
     }
 

@@ -274,8 +274,8 @@ export class HttpClientService {
 
         const effectiveMaxRetries = retryable ? this.maxRetries : 0;
         let lastError: unknown;
-        let circuitFailureCounted = false;
         for (let attempt = 0; attempt <= effectiveMaxRetries; attempt++) {
+            let circuitFailureCounted = false;
             if (attempt > 0) {
                 await new Promise((resolve) => setTimeout(resolve, this.getRetryDelay(attempt - 1)));
             }
@@ -370,7 +370,6 @@ export class HttpClientService {
                 throw new SatimUnexpectedResponseError("Network or internal error", "network");
             } finally {
                 clearTimeout(timeoutId);
-                circuitFailureCounted = false;
             }
         }
 

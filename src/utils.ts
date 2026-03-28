@@ -91,7 +91,8 @@ export function deriveIdempotencyKey(params: {
         throw new Error("deriveIdempotencyKey: amount must be a finite positive number.");
     }
     const mode = params.mode ?? "register";
-    const input = `${mode}|${params.merchantRef.trim()}|${params.amount}|${params.currency ?? "012"}`;
+    const minorUnits = toMinorUnits(params.amount);
+    const input = `${mode}|${params.merchantRef.trim()}|${minorUnits}|${params.currency ?? "012"}`;
     const hash = createHash("sha256").update(input).digest("hex");
     return `dk_${hash}`;
 }

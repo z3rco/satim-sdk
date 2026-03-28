@@ -327,13 +327,9 @@ export class WebhookHandler {
         // at a time per orderId.
         const inflight = this.inflightLocks.get(orderId);
         if (inflight) {
-            // Another verify() for this orderId is already in progress.
-            // Wait for it to complete, then return as duplicate.
-            await inflight.catch(() => {});
-            const amount = await this.onResolveAmount(orderId);
-            if (amount === undefined || amount === null) return null;
-            const response = await this.satim.confirm(orderId, amount);
-            return { orderId, response, duplicate: true };
+            const firstResult = await inflight.catch(() => null);
+            if (!firstResult) return null;
+            return { orderId, response: firstResult.response, duplicate: true };
         }
 
         // Acquire the lock for this orderId
