@@ -73,7 +73,7 @@ export class RegisterResponse {
 
     constructor(raw: RegisterOrderResponse) {
         validateRegisterSchema(raw);
-        this._raw = { ...raw };
+        this._raw = structuredClone(raw);
     }
 
     /** Extract the order ID from the registration response. */
@@ -133,9 +133,8 @@ export class ConfirmResponse {
     private readonly _raw: ConfirmOrderResponse;
 
     constructor(raw: ConfirmOrderResponse) {
-        const cloned = { ...raw };
-        validateConfirmSchema(cloned);
-        this._raw = cloned;
+        validateConfirmSchema(raw);
+        this._raw = structuredClone(raw);
     }
 
     /** IP address of the cardholder, if available. */
