@@ -1,8 +1,7 @@
 {
   "name": "satim-module",
-  "private": true,
   "version": "1.0.0",
-  "description": "Internal SATIM payment gateway SDK (CIB & Edahabia)",
+  "description": "Stateless, secure, zero-dependency TypeScript SDK for the SATIM payment gateway — CIB & Edahabia card payments for Algeria",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -16,6 +15,7 @@
   "files": [
     "dist"
   ],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -23,6 +23,30 @@
     "docs": "typedoc",
     "docs:serve": "typedoc && bunx serve docs/api"
   },
+  "keywords": [
+    "satim",
+    "payment",
+    "payment-gateway",
+    "algeria",
+    "cib",
+    "edahabia",
+    "sdk",
+    "typescript",
+    "fintech",
+    "webhook",
+    "zero-dependencies",
+    "stateless"
+  ],
+  "author": "z3rco",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/z3rco/satim-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/z3rco/satim-sdk/issues"
+  },
+  "homepage": "https://z3rco.github.io/satim-sdk/",
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typedoc": "^0.28.19",
@@ -31,7 +55,5 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  },
-  "author": "[COMPANY]",
-  "license": "UNLICENSED"
+  }
 }

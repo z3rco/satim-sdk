@@ -1,0 +1,24 @@
+name: Question
+description: Ask a usage question (please prefer Discussions for open-ended questions)
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For open-ended questions, please use [Discussions](../discussions) instead.
+        Use this template only when the question is concrete and reproducible.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What are you trying to accomplish? What have you already tried?
+    validations:
+      required: true

@@ -6,11 +6,14 @@
 
 CIB and Edahabia card payments for Algeria — production-grade, runtime-agnostic, security-first.
 
+[![CI](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE.md)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](#compatibility)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-success)](./package.json)
-[![Tests](https://img.shields.io/badge/tests-vitest-6E4AFF)](./tests)
+[![API Docs](https://img.shields.io/badge/docs-TypeDoc-blueviolet)](https://z3rco.github.io/satim-sdk/)
+[![Discussions](https://img.shields.io/badge/discussions-GitHub-orange)](https://github.com/z3rco/satim-sdk/discussions)
 
 </div>
 
