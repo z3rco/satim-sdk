@@ -260,13 +260,12 @@ export class HttpClientService {
             if (attempt > 0) {
                 await new Promise((r) => setTimeout(r, this.getRetryDelay(attempt - 1)));
             }
-            this.assertTlsSafe();
-
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
             let counted = false;
 
             try {
+                this.assertTlsSafe();
                 const response = await (this.fetchImpl ?? globalThis.fetch)(url, {
                     method: "POST",
                     headers: {
@@ -322,6 +321,10 @@ export class HttpClientService {
                     this.circuitBreaker?.onFailure();
                     if (attempt < maxAttempts) { lastError = err; continue; }
                     throw err;
+                }
+                if (error instanceof SatimError) {
+                    this.circuitBreaker?.onFailure();
+                    throw error;
                 }
                 throw new SatimUnexpectedResponseError("Network or internal error", "network");
             } finally {

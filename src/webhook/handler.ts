@@ -209,7 +209,7 @@ export class WebhookHandler {
 
         const existing = this.inflightLocks.get(orderId);
         if (existing) {
-            const first = await existing.catch(() => null);
+            const first = await existing;
             return first ? { orderId, response: first.response, duplicate: true } : null;
         }
 

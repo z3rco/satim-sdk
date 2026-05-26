@@ -171,7 +171,7 @@ describe("verifyAmount — strict comparison", () => {
         ];
         for (const [gatewayAmount, expected] of cases) {
             const response = new ConfirmResponse({ OrderStatus: "2", Amount: gatewayAmount } as any);
-            expect(response.verifyAmount(expected)).toBe(true);
+            expect(() => response.verifyAmount(expected)).not.toThrow();
         }
     });
 

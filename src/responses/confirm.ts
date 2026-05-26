@@ -233,7 +233,7 @@ export class ConfirmResponse {
      * @throws {@link SatimUnexpectedResponseError} when the gateway amount
      *         is absent, non-satim-module, fractional, or mismatches.
      */
-    public verifyAmount(expectedAmount: number): boolean {
+    public verifyAmount(expectedAmount: number): void {
         const rawAmount = this._raw.Amount ?? this._raw.amount;
         if (rawAmount === undefined) {
             throw new SatimUnexpectedResponseError("missing amount in payment response.", "gateway");
@@ -252,7 +252,6 @@ export class ConfirmResponse {
                 `payment amount mismatch. Expected ${expectedMinor} (minor units), got ${actualMinor}`, "gateway",
             );
         }
-        return true;
     }
 
     /**

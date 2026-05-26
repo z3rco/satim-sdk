@@ -94,7 +94,7 @@ export function assertOrderId(orderId: string, context: string): void {
         throw new SatimInvalidArgumentError(`Order ID is required for ${context}`);
     }
     if (orderId.length > 128 || !/^[a-zA-Z0-9\-]+$/.test(orderId)) {
-        throw new SatimInvalidArgumentError(`Invalid order ID format for ${context}. Must be alphasatim-module/hyphens, max 128 chars.`);
+        throw new SatimInvalidArgumentError(`Invalid order ID format for ${context}. Must be alphanumeric/hyphens, max 128 chars.`);
     }
 }
 
@@ -137,7 +137,7 @@ export function assertLanguage(lang: unknown): asserts lang is Language {
 export function assertOrderNumber(value: string | number): string {
     const str = String(value);
     if (!str || !/^[a-zA-Z0-9]{1,10}$/.test(str)) {
-        throw new SatimInvalidArgumentError("Order number must be 1-10 alphasatim-module characters (SATIM AN.10).");
+        throw new SatimInvalidArgumentError("Order number must be 1-10 alphanumeric characters (SATIM AN.10).");
     }
     return str;
 }
@@ -161,7 +161,7 @@ export function assertTimeout(seconds: number): void {
 export function assertIdempotencyKey(key: string): void {
     if (!key || !/^[a-zA-Z0-9_\-]{1,128}$/.test(key)) {
         throw new SatimInvalidArgumentError(
-            "Idempotency key must be 1-128 characters, alphasatim-module, hyphens, or underscores.",
+            "Idempotency key must be 1-128 characters, alphanumeric, hyphens, or underscores.",
         );
     }
 }
@@ -177,7 +177,7 @@ export function assertIdempotencyKey(key: string): void {
  */
 export function assertUserField(key: string, value: string): void {
     if (!key || /^\d+$/.test(key)) {
-        throw new SatimInvalidArgumentError("User defined field key must be a non-empty, non-satim-module string.");
+        throw new SatimInvalidArgumentError("User defined field key must be a non-empty, non-numeric string.");
     }
     if (key.length > 128) {
         throw new SatimInvalidArgumentError("User defined field key must not exceed 128 characters.");

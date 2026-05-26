@@ -789,7 +789,7 @@ describe("6. Gateway response injection", () => {
             Amount: 1999,
         });
         // String(1999) === "1999", /^\d+$/ matches
-        expect(response.verifyAmount(19.99)).toBe(true);
+        expect(() => response.verifyAmount(19.99)).not.toThrow();
     });
 
     test("ErrorCode as number is normalized to string", () => {
