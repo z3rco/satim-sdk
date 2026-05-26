@@ -19,6 +19,12 @@ CIB and Edahabia card payments for Algeria — production-grade, runtime-agnosti
 
 ---
 
+> [!WARNING]
+> **This SDK has never been tested against a live production SATIM environment.**
+> It has been developed and validated exclusively against the SATIM test gateway (`test.satim.dz`) and simulated responses.
+> Use in production entirely at your own risk. The authors and contributors accept no responsibility for payment failures, data loss, financial losses, or any other damages arising from the use of this software in any environment.
+> **Always perform your own end-to-end testing against the SATIM test gateway before going live.**
+
 ## Why satim-sdk?
 
 - **Zero runtime dependencies.** Just the Web Fetch API. No transitive supply chain.
