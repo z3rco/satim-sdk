@@ -204,6 +204,9 @@ export class Satim extends SatimConfig {
      * Query order status via `/getOrderStatus.do`.
      *
      * Idempotent — automatically retried on transient failures (5xx, timeout).
+     * Concurrent calls for the same `orderId` are collapsed into a single
+     * in-flight request — the second caller receives the first's response
+     * without a second round trip.
      *
      * Preconditions: `orderId` matches the strict order-ID format.
      *
@@ -220,6 +223,48 @@ export class Satim extends SatimConfig {
             { userName: this.username, password: this.password, orderId, language: this._language },
         );
         return new ConfirmResponse(result);
+    }
+
+    /**
+     * Query multiple orders in parallel via concurrent `/getOrderStatus.do` calls.
+     *
+     * Fires all queries simultaneously. Concurrent calls for the same `orderId`
+     * are deduplicated by `HttpClientService` — passing duplicates in the array
+     * does not multiply requests.
+     *
+     * Rejects with the first error encountered; all in-flight requests still run
+     * to completion (standard `Promise.all` semantics).
+     *
+     * @throws {@link SatimInvalidArgumentError} on any malformed `orderId`.
+     * @throws Any gateway/transport exception per `handleApiRequest`.
+     */
+    public statusAll(orderIds: string[]): Promise<ConfirmResponse[]> {
+        return Promise.all(orderIds.map(id => this.status(id)));
+    }
+
+    /**
+     * Pre-warm the TCP+TLS connection to the SATIM gateway.
+     *
+     * Call this once during application startup (or just before a checkout
+     * flow begins) to avoid paying the TCP handshake + TLS negotiation cost
+     * (~50–200 ms) on the first real payment request.
+     *
+     * Sends a single probe request to `/getOrderStatus.do` with a known-unknown
+     * order ID. The gateway responds immediately with ErrorCode 6; the
+     * connection is then established and kept alive for subsequent requests.
+     *
+     * This method never throws — if the probe fails (network down, gateway
+     * unreachable) the error is silently discarded. The only consequence is
+     * that the first real request will incur the normal handshake cost.
+     */
+    public async warmup(): Promise<void> {
+        try {
+            await this.httpClientService.handleApiRequest<ConfirmOrderResponse>(
+                "/getOrderStatus.do",
+                { userName: this.username, password: this.password, orderId: "00000000-0000-0000-0000-000000000000", language: this._language },
+                { retryable: false },
+            );
+        } catch { /* expected: ErrorCode 6 for unknown probe order */ }
     }
 
     /**

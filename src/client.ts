@@ -55,6 +55,22 @@ export interface HttpClientOptions {
      * entirely (not recommended for production).
      */
     circuitBreaker?: CircuitBreakerOptions | false;
+    /**
+     * Custom `fetch` implementation. Defaults to the global `fetch`.
+     *
+     * Inject an undici `Pool`-backed fetch on Node.js to enable true
+     * connection pooling and HTTP/2 multiplexing:
+     *
+     * ```ts
+     * import { Pool } from "undici";
+     * const pool = new Pool("https://cib.satim.dz");
+     * const satim = new Satim(credentials, { fetch: pool.fetch.bind(pool) });
+     * ```
+     *
+     * On edge runtimes (Cloudflare Workers, Vercel Edge) the global fetch
+     * already pools connections — leave this unset.
+     */
+    fetch?: typeof globalThis.fetch;
 }
 
 /**
@@ -74,6 +90,10 @@ export class HttpClientService {
     private readonly maxRetries: number;
     private readonly timeoutMs: number;
     private readonly circuitBreaker: CircuitBreaker | null;
+    /** Custom fetch supplied by the caller; `undefined` means use `globalThis.fetch` lazily. */
+    private readonly fetchImpl: typeof globalThis.fetch | undefined;
+    /** Deduplicates concurrent identical idempotent requests (same endpoint + body). */
+    private readonly _inflight = new Map<string, Promise<unknown>>();
 
     /**
      * Preconditions: `timeoutMs ∈ [1000, 300000]` when supplied;
@@ -95,6 +115,7 @@ export class HttpClientService {
         this.circuitBreaker = options?.circuitBreaker === false
             ? null
             : new CircuitBreaker(options?.circuitBreaker);
+        this.fetchImpl = options?.fetch; // undefined → use globalThis.fetch lazily at call time
     }
 
     /**
@@ -120,14 +141,29 @@ export class HttpClientService {
      *         (network, timeout, parse, non-object response, other
      *         non-zero `ErrorCode`, circuit open).
      */
-    public async handleApiRequest<T = unknown>(
+    public handleApiRequest<T = unknown>(
         endpoint: string,
         data: Record<string, unknown>,
         options?: { retryable?: boolean },
     ): Promise<T> {
-        const result = await this.sendRequest<T>(endpoint, data, options?.retryable ?? true);
-        this.validateApiResponse(result);
-        return result;
+        const retryable = options?.retryable ?? true;
+
+        if (!retryable) {
+            return this.sendRequest<T>(endpoint, data, false)
+                .then(result => { this.validateApiResponse(result); return result; });
+        }
+
+        // Collapse concurrent identical idempotent requests into one in-flight call.
+        // Two callers awaiting status for the same orderId share one round trip.
+        const key = `${endpoint}:${this.buildBody(data)}`;
+        const existing = this._inflight.get(key) as Promise<T> | undefined;
+        if (existing) return existing;
+
+        const promise: Promise<T> = this.sendRequest<T>(endpoint, data, true)
+            .then(result => { this.validateApiResponse(result); return result; })
+            .finally(() => this._inflight.delete(key));
+        this._inflight.set(key, promise);
+        return promise;
     }
 
     /** @returns The base URL for the active environment. */
@@ -231,7 +267,7 @@ export class HttpClientService {
             let counted = false;
 
             try {
-                const response = await fetch(url, {
+                const response = await (this.fetchImpl ?? globalThis.fetch)(url, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded",

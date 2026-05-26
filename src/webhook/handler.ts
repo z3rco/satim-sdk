@@ -229,19 +229,17 @@ export class WebhookHandler {
      * the lock before `await`-ing this method).
      */
     private async executeVerify(orderId: string): Promise<WebhookResult | null> {
-        const isDuplicate = await this.onCheckDuplicate(orderId);
-        if (isDuplicate) {
-            const amount = await this.onResolveAmount(orderId);
-            if (amount === undefined || amount === null) return null;
-            const response = await this.satim.confirm(orderId, amount);
-            return { orderId, response, duplicate: true };
-        }
+        // Both are typically DB calls with no dependency on each other — run in parallel
+        // to eliminate one sequential round trip before the gateway call.
+        const [isDuplicate, expectedAmount] = await Promise.all([
+            this.onCheckDuplicate(orderId),
+            this.onResolveAmount(orderId),
+        ]);
 
-        const expectedAmount = await this.onResolveAmount(orderId);
         if (expectedAmount === undefined || expectedAmount === null) return null;
 
         const response = await this.satim.confirm(orderId, expectedAmount);
-        if (!response.isPending()) await this.onMarkProcessed(orderId);
-        return { orderId, response, duplicate: false };
+        if (!isDuplicate && !response.isPending()) await this.onMarkProcessed(orderId);
+        return { orderId, response, duplicate: isDuplicate };
     }
 }
