@@ -1,26 +1,41 @@
 /**
  * IEEE-754-safe currency conversion between major and minor units.
  *
- * The toPrecision(12) pipeline neutralizes representation artifacts for any
- * input below MAX_SAFE_AMOUNT with at most 2 decimal places.
+ * All amounts in the SDK pass through this module exactly once at each
+ * boundary: caller input is converted to minor-unit integers before being
+ * sent to the gateway, and gateway responses are converted back to major
+ * units for callers. There is no float arithmetic on currency anywhere
+ * else in the SDK.
+ *
+ * Sub-centime precision is detected via a relative-epsilon comparison
+ * against the nearest integer minor-unit value:
+ *
+ *     |amount*100 - round(amount*100)| > max(1e-7, |round(amount*100)| × 1e-13)
+ *
+ * The relative term keeps the check sound across the full input range
+ * (up to {@link MAX_SAFE_AMOUNT}). The 1e-7 floor avoids false positives
+ * on small-magnitude IEEE-754 artifacts like `0.1 + 0.2 = 0.30000000000000004`.
  * @file
  */
 
-/** Upper bound where toPrecision(12) still preserves centime accuracy. */
+/**
+ * Upper bound where the relative-epsilon precision check remains sound.
+ * Inputs above this are rejected by {@link toMinorUnits} outright.
+ *
+ * The numeric value (`9_999_999_999.99`) is chosen so that `amount * 100`
+ * fits comfortably within `Number.MAX_SAFE_INTEGER` (~9.007e15) with
+ * room for the relative-epsilon tolerance to detect sub-centime inputs.
+ */
 export const MAX_SAFE_AMOUNT = 9_999_999_999.99;
 
 /**
- * Detect sub-centime precision via relative-epsilon comparison against
- * the nearest integer minor-unit value.
+ * Detect whether a major-unit amount has more than 2 decimal places.
  *
- * Tolerance scales with magnitude (1e-13 × |minor|) so the check stays
- * sound near MAX_SAFE_AMOUNT, where toPrecision(12) silently rounds the
- * 13th significant digit and masks the third decimal place.
- *
- * Floor of 1e-7 keeps the IEEE-754 round-trip artifacts of small inputs
- * (e.g. `0.1 + 0.2 = 0.30000000000000004`) from triggering false positives.
- *
- * @param amount Major-unit amount.
+ * Returns `true` iff the IEEE-754 representation of `amount * 100` differs
+ * from the nearest integer by more than the relative tolerance described
+ * in the file header. Non-finite or non-numeric inputs return `false` —
+ * this function is not the validation barrier; {@link toMinorUnits}
+ * performs the upstream type and range checks.
  */
 export function hasSubCentimePrecision(amount: number): boolean {
     const minor = amount * 100;
@@ -31,17 +46,24 @@ export function hasSubCentimePrecision(amount: number): boolean {
 
 /**
  * Validate that a value is a strictly positive integer count of minor units.
- * @param minor Minor-unit value from the gateway.
+ *
+ * Used by `ConfirmResponse.verifyAmount` and `getAmount` to guard against
+ * gateway responses that contain fractional or non-positive amounts.
  */
 export function isWholeMinorUnits(minor: number): boolean {
     return Number.isFinite(minor) && Number.isInteger(minor) && minor > 0;
 }
 
 /**
- * Convert a major-unit amount to integer minor units.
+ * Convert a major-unit amount to an integer count of minor units (centimes).
  *
- * @param amount Positive, finite, <= MAX_SAFE_AMOUNT, <= 2 decimal places.
- * @throws Error on invalid input.
+ * This is the single conversion point for all caller amounts. Bypassing it
+ * (e.g. computing `amount * 100` directly) would reintroduce the IEEE-754
+ * silent-rounding vulnerability fixed by the relative-epsilon precision check.
+ *
+ * @throws Error when `amount` is not a finite positive number.
+ * @throws Error when `amount` exceeds {@link MAX_SAFE_AMOUNT}.
+ * @throws Error when `amount` has more than 2 decimal places.
  */
 export function toMinorUnits(amount: number): number {
     if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) {

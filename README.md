@@ -157,14 +157,11 @@ npm run build     # compile to dist/
 
 ## Documentation
 
-Detailed guides are available in [`docs/`](docs/):
-
-1. [Installation](docs/01-installation.md)
-2. [Initialization](docs/02-initialization.md)
-3. [Registering a Payment](docs/03-creating-payment.md)
-4. [Verifying a Payment](docs/04-verifying-payment.md)
-5. [Refunds](docs/05-refunds.md)
-6. [Advanced Features](docs/06-advanced-features.md)
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — system topology, request lifecycle, technical constraints, state machine, predicate contract.
+- [`src/README.md`](./src/README.md) — module map and dependency order.
+- [`src/responses/README.md`](./src/responses/README.md) — response wrappers and the status predicate contract.
+- [`src/webhook/README.md`](./src/webhook/README.md) — zero-trust verification flow and distributed deployment notes.
+- [`SECURITY.md`](./SECURITY.md) — threat model, mitigations, known limitations.
 
 ## Architecture
 

@@ -1,17 +1,32 @@
 /**
  * Runtime schema validators for SATIM gateway responses.
- * Normalizes number→string coercions for fields the spec sends inconsistently.
+ *
+ * The SATIM/BPC spec is inconsistent about whether numeric-looking fields
+ * (`OrderStatus`, `ErrorCode`, `actionCode`) arrive as JSON strings or
+ * numbers — examples in the official docs show both. These validators
+ * normalise everything to string so downstream predicate comparisons
+ * (`=== "2"`) work regardless of the gateway's serialisation choice.
+ *
+ * Validation runs at the SDK boundary inside `RegisterResponse` and
+ * `ConfirmResponse` constructors. Malformed payloads are rejected with
+ * {@link SatimUnexpectedResponseError} before any caller code sees them.
  * @file
  */
 
 import { SatimUnexpectedResponseError } from "../exceptions";
 import type { RegisterOrderResponse, ConfirmOrderResponse } from "../types";
 
+/** True for non-array plain objects (excludes `null`, arrays, primitives). */
 function isObject(raw: unknown): raw is Record<string, unknown> {
     return raw !== null && typeof raw === "object" && !Array.isArray(raw);
 }
 
-/** Validate /register.do response shape. */
+/**
+ * Assert that `raw` matches `RegisterOrderResponse` shape. On return, `orderId`
+ * and `formUrl` are confirmed non-empty strings; `errorCode` (if present) is
+ * confirmed string.
+ * @throws {@link SatimUnexpectedResponseError} with `errorCategory: "gateway"`.
+ */
 export function validateRegisterSchema(raw: unknown): asserts raw is RegisterOrderResponse {
     if (!isObject(raw)) {
         throw new SatimUnexpectedResponseError("Malformed registration response: not an object", "gateway");
@@ -27,7 +42,18 @@ export function validateRegisterSchema(raw: unknown): asserts raw is RegisterOrd
     }
 }
 
-/** Validate order-management response shape; normalizes OrderStatus/ErrorCode/actionCode to strings. */
+/**
+ * Assert that `raw` matches `ConfirmOrderResponse` shape and normalise
+ * spec-inconsistent numeric fields (`OrderStatus`, `ErrorCode`, `actionCode`)
+ * to strings.
+ *
+ * Mutates `raw` in place. Safe because the caller (`ConfirmResponse`
+ * constructor) immediately `structuredClone`s the result.
+ *
+ * @throws {@link SatimUnexpectedResponseError} with `errorCategory: "gateway"`
+ *         when `raw` is not an object or any coerced field has a type
+ *         other than `string | number | undefined`.
+ */
 export function validateConfirmSchema(raw: unknown): asserts raw is ConfirmOrderResponse {
     if (!isObject(raw)) {
         throw new SatimUnexpectedResponseError("Malformed order response: not an object", "gateway");
@@ -37,6 +63,16 @@ export function validateConfirmSchema(raw: unknown): asserts raw is ConfirmOrder
     coerceNumericString(raw, "actionCode");
 }
 
+/**
+ * Coerce a number-or-string field to string, in place. Reject other types.
+ *
+ * Preconditions: `raw` is a plain object.
+ *
+ * Postcondition: `raw[field]` is `undefined` or `string`.
+ *
+ * @throws {@link SatimUnexpectedResponseError} when `raw[field]` is
+ *         neither `undefined`, `number`, nor `string`.
+ */
 function coerceNumericString(raw: Record<string, unknown>, field: string): void {
     const v = raw[field];
     if (v === undefined) return;

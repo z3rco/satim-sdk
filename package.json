@@ -19,10 +19,13 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "docs": "typedoc",
+    "docs:serve": "typedoc && bunx serve docs/api"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "typedoc": "^0.28.19",
     "typescript": "^5.4.0",
     "vitest": "^4.1.1"
   },

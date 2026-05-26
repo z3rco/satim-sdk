@@ -1,0 +1,26 @@
+{
+    "$schema": "https://typedoc.org/schema.json",
+    "entryPoints": ["src/index.ts"],
+    "out": "docs/api",
+    "name": "satim-module",
+    "readme": "README.md",
+    "projectDocuments": [
+        "ARCHITECTURE.md",
+        "src/README.md",
+        "src/responses/README.md",
+        "src/webhook/README.md"
+    ],
+    "includeVersion": true,
+    "excludePrivate": true,
+    "excludeInternal": true,
+    "excludeProtected": false,
+    "categorizeByGroup": true,
+    "sort": ["source-order"],
+    "hideGenerator": true,
+    "treatWarningsAsErrors": false,
+    "validation": {
+        "notExported": true,
+        "invalidLink": false,
+        "notDocumented": false
+    }
+}

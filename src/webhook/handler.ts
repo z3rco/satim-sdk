@@ -1,9 +1,32 @@
 /**
- * Zero-trust webhook handler.
+ * Zero-trust webhook handler for SATIM callbacks.
  *
- * Never trusts the callback payload — always re-fetches authoritative state
- * from SATIM via satim.confirm(). Strictly stronger than HMAC verification
- * because signatures prove origin but not currentness.
+ * The handler never trusts the callback payload. Every invocation
+ * triggers a server-to-server `satim.confirm(orderId, expectedAmount)`
+ * against the live gateway, with automatic amount verification via
+ * `ConfirmResponse.verifyAmount`.
+ *
+ * # Why this is stronger than HMAC verification
+ *
+ * HMAC signatures prove the payload was issued by the gateway. They do
+ * not prove the payload reflects current state. Replay attacks and
+ * stale-webhook races pass signature checks because the signature is
+ * still valid even though the state has moved on.
+ *
+ * Re-fetching live state defeats both: a replayed callback triggers a
+ * fresh `confirm()` that returns the current state, and the amount check
+ * against the merchant's source of truth prevents partial-payment
+ * manipulation regardless of what the callback payload claims.
+ *
+ * # Built-in protections
+ *
+ * - **Rate limit** — sliding window cap on inbound callbacks.
+ * - **In-flight lock** — per-orderId Promise lock prevents the
+ *   check-then-mark race within a single process.
+ * - **Duplicate detection** — pluggable persistence callbacks for
+ *   multi-instance deployments.
+ * - **Pending-aware marking** — pending orders are NOT marked processed,
+ *   so subsequent callbacks can re-check as the state advances.
  * @file
  */
 
@@ -15,40 +38,74 @@ import { extractOrderId } from "./extract";
 
 /** Server-verified result of a webhook/callback invocation. */
 export interface WebhookResult {
+    /** The validated order ID extracted from the source. */
     orderId: string;
-    /** Authoritative response fetched from SATIM via confirm(). */
+    /**
+     * Authoritative `ConfirmResponse` fetched from SATIM via `confirm()`.
+     * Amount verification has already run on `isSuccessful()` responses.
+     */
     response: ConfirmResponse;
-    /** True when this orderId was already fulfilled. */
+    /**
+     * `true` when this orderId had already been processed (per the
+     * `onCheckDuplicate` strategy). Callers should NOT re-fulfil
+     * downstream side effects when this is set.
+     */
     duplicate: boolean;
 }
 
 export interface WebhookHandlerOptions {
     /**
-     * Resolve the expected major-unit amount for an orderId.
-     * Return undefined/null to reject the callback as unknown.
+     * Resolve the expected major-unit amount for an orderId. Typically
+     * a database lookup keyed by the orderId your application stored at
+     * registration time.
+     *
+     * Return `undefined` / `null` to reject the callback as referencing
+     * an unknown order — `verify()` will return `null` without calling
+     * the gateway.
      */
     onResolveAmount: (orderId: string) => Promise<number | undefined | null> | number | undefined | null;
+
     /**
-     * Atomic check-and-mark duplicate detection. For multi-instance deployments
-     * back this with Redis SETNX or DB INSERT ... ON CONFLICT — the SDK's
-     * in-flight lock only serializes within a single Node.js process.
+     * Check whether `orderId` has already been processed.
+     *
+     * For multi-instance deployments, MUST implement check-and-mark as a
+     * single atomic operation (Redis `SETNX`, database
+     * `INSERT … ON CONFLICT DO NOTHING`). The handler's own in-flight
+     * lock only serialises within a single Node.js process.
+     *
+     * Default (single-process only): in-memory `Set`.
      */
     onCheckDuplicate?: (orderId: string) => Promise<boolean> | boolean;
-    /** Called after a successful, non-duplicate verification. */
+
+    /**
+     * Mark `orderId` as processed.
+     *
+     * Called after `confirm()` returns a non-pending response. Pending
+     * orders are deliberately not marked so subsequent callbacks can
+     * re-check as the order advances to a terminal state.
+     */
     onMarkProcessed?: (orderId: string) => Promise<void> | void;
-    /** Max callbacks per sliding window. Default 100. */
+
+    /** Max admitted callbacks per sliding window. Default 100. */
     maxCallbacksPerWindow?: number;
-    /** Sliding window duration in ms. Default 60000. */
+    /** Sliding window duration in ms. Default 60 000. */
     rateLimitWindowMs?: number;
-    /** Suppress the multi-instance warning for confirmed single-process deployments. */
+    /**
+     * Suppress the construction-time `console.warn` that fires when the
+     * in-memory duplicate fallback is in use. Set to `true` only after
+     * confirming single-process deployment.
+     */
     suppressMultiInstanceWarning?: boolean;
 }
 
 /**
  * Zero-trust webhook handler.
  *
- * Built-in protections: replay rejection, rate limiting, amount verification,
- * orderId sanitization, per-orderId in-flight lock against double-fulfillment.
+ * Construct via `satim.createWebhookHandler(options)`; do not instantiate
+ * directly (the `satim` reference is required).
+ *
+ * The per-orderId in-flight lock serialises concurrent invocations for
+ * the same orderId; different orderIds run in parallel.
  */
 export class WebhookHandler {
     private readonly satim: Satim;
@@ -56,10 +113,32 @@ export class WebhookHandler {
     private readonly onCheckDuplicate: (orderId: string) => Promise<boolean> | boolean;
     private readonly onMarkProcessed: (orderId: string) => Promise<void> | void;
     private readonly rateLimiter: SlidingWindowRateLimiter;
+
+    /** In-memory duplicate set used when no `onCheckDuplicate` is provided. */
     private readonly processedSet = new Set<string>();
-    /** Per-orderId in-flight lock — prevents the check-then-mark race within one process. */
+    /**
+     * Per-orderId Promise lock. Prevents the check-then-mark race within
+     * a single process: two concurrent `verify()` calls for the same
+     * orderId would both pass `onCheckDuplicate` (returns `false`) and
+     * both proceed to `confirm()` and `onMarkProcessed`, double-fulfilling
+     * the order. The lock serialises them; the second call observes the
+     * first's result with `duplicate: true`.
+     */
     private readonly inflightLocks = new Map<string, Promise<WebhookResult | null>>();
 
+    /**
+     * Preconditions: `options.onResolveAmount` is provided.
+     * `maxCallbacksPerWindow` (if set) is a positive integer.
+     * `rateLimitWindowMs` (if set) is a positive integer ≥ 1000.
+     *
+     * Side effect: emits a `console.warn` when both `onCheckDuplicate`
+     * and `onMarkProcessed` are absent (in-memory fallback) and
+     * `suppressMultiInstanceWarning` is not set.
+     *
+     * @throws {@link SatimMissingDataError} when `onResolveAmount` is missing.
+     * @throws {@link SatimInvalidArgumentError} when rate-limiter
+     *         parameters are out of range or non-integer.
+     */
     constructor(satim: Satim, options: WebhookHandlerOptions) {
         if (!options.onResolveAmount) {
             throw new SatimMissingDataError(
@@ -98,14 +177,30 @@ export class WebhookHandler {
     }
 
     /**
-     * Verify a callback by re-fetching authoritative state from SATIM.
+     * Verify a webhook callback by re-fetching authoritative state.
      *
-     * Steps: extract orderId → rate limit → in-flight lock → duplicate check
-     *      → resolve amount → confirm() → mark processed (unless pending).
+     * Flow (each step short-circuits with `null` on failure):
+     * 1. Extract orderId from `source` via {@link extractOrderId}.
+     * 2. Apply rate limit.
+     * 3. Acquire per-orderId in-flight lock.
+     * 4. Run `onCheckDuplicate(orderId)`.
+     * 5. Run `onResolveAmount(orderId)`. Unknown order → `null` (no gateway call).
+     * 6. `satim.confirm(orderId, expectedAmount)` — `verifyAmount` runs automatically on success.
+     * 7. `onMarkProcessed(orderId)` if the response is not pending.
+     * 8. Release lock in `finally`.
      *
-     * @param source Callback payload, URL, Request, or orderId string.
-     * @returns WebhookResult on success; null when input is invalid, rate
-     *          limited, or the order is unknown.
+     * Postcondition: returns a `WebhookResult` on success (including
+     * duplicate detection), or `null` when input is invalid, rate
+     * limited, or the order is unknown.
+     *
+     * Complexity: dominated by the gateway round trip in step 6
+     * (`O(network)`). All other steps are `O(1)` or `O(log n)` (rate
+     * limiter).
+     *
+     * @throws Anything `satim.confirm()` can throw — primarily
+     *         {@link SatimUnexpectedResponseError} on transport failures
+     *         or amount mismatch. Callers should wrap the call and
+     *         respond with HTTP 500 on unexpected throws.
      */
     async verify(source: unknown): Promise<WebhookResult | null> {
         const orderId = extractOrderId(source);
@@ -127,6 +222,12 @@ export class WebhookHandler {
         }
     }
 
+    /**
+     * Core verification path, runs exactly once per `verify()` call.
+     *
+     * Holds the in-flight lock for its entire duration (the caller takes
+     * the lock before `await`-ing this method).
+     */
     private async executeVerify(orderId: string): Promise<WebhookResult | null> {
         const isDuplicate = await this.onCheckDuplicate(orderId);
         if (isDuplicate) {
