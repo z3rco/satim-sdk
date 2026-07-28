@@ -48,7 +48,7 @@
   },
   "homepage": "https://z3rco.github.io/satim-sdk/",
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.1.2",
     "typedoc": "^0.28.19",
     "typescript": "^5.4.0",
     "vitest": "^4.1.1"
