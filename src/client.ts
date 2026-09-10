@@ -5,8 +5,8 @@
  * - Form-encode and POST request bodies (the gateway requires
  *   `application/x-www-form-urlencoded`, not JSON).
  * - Per-request timeout via `AbortController`.
- * - Exponential-backoff retry on transient failures (5xx, timeout),
- *   gated by `options.retryable` from the caller.
+ * - Exponential-backoff retry on transient failures (5xx, timeout,
+ *   connection failure), gated by `options.retryable` from the caller.
  * - Circuit breaker integration for fail-fast on sustained gateway degradation.
  * - Map gateway `ErrorCode` values to typed exceptions.
  * - Refuse to operate when `NODE_TLS_REJECT_UNAUTHORIZED=0` is in the env.
@@ -19,10 +19,11 @@
 import {
     SatimError, SatimInvalidCredentialsError, SatimUnexpectedResponseError,
     SatimInvalidArgumentError, SatimGatewayError,
-} from "./exceptions";
-import { CircuitBreaker, type CircuitBreakerOptions } from "./circuit-breaker";
+} from "./exceptions.js";
+import { CircuitBreaker, type CircuitBreakerOptions } from "./circuit-breaker.js";
+import { sha256Hex } from "./crypto.js";
 
-export type { CircuitBreakerOptions } from "./circuit-breaker";
+export type { CircuitBreakerOptions } from "./circuit-breaker.js";
 
 const NON_PRINTABLE = /[^\x20-\x7E]/g;
 
@@ -39,10 +40,23 @@ function sanitizeGatewayMessage(msg: string): string {
     return msg.replace(NON_PRINTABLE, "").slice(0, 200);
 }
 
+/**
+ * True for an abort/timeout rejection from any `fetch` implementation.
+ *
+ * Matches by `name` so it holds for the global `fetch`'s `DOMException`,
+ * for custom fetches that reject with a plain `Error`, and for
+ * implementations that surface `AbortSignal.timeout` as `TimeoutError`.
+ */
+function isAbortError(error: unknown): boolean {
+    if (typeof error !== "object" || error === null) return false;
+    const name = (error as { name?: unknown }).name;
+    return name === "AbortError" || name === "TimeoutError";
+}
+
 export interface HttpClientOptions {
     /**
-     * Maximum retries on transient failures (5xx, timeout) for idempotent
-     * calls. Clamped to `[0, 10]`. Default 2.
+     * Maximum retries on transient failures (5xx, timeout, connection
+     * failure) for idempotent calls. Clamped to `[0, 10]`. Default 2.
      */
     maxRetries?: number;
     /**
@@ -155,7 +169,11 @@ export class HttpClientService {
 
         // Collapse concurrent identical idempotent requests into one in-flight call.
         // Two callers awaiting status for the same orderId share one round trip.
-        const key = `${endpoint}:${this.buildBody(data)}`;
+        // The body is hashed rather than used verbatim: it carries the merchant
+        // password, and a raw key would leave that credential sitting in a Map
+        // key where a heap dump or a debugger inspecting `_inflight` would read
+        // it in plaintext.
+        const key = `${endpoint}:${sha256Hex(this.buildBody(data))}`;
         const existing = this._inflight.get(key) as Promise<T> | undefined;
         if (existing) return existing;
 
@@ -181,16 +199,67 @@ export class HttpClientService {
         return base + Math.random() * base * 0.5;
     }
 
-    /** Classify whether a thrown error is transient and should be retried. */
-    private isRetryable(err: unknown): boolean {
-        return err instanceof SatimUnexpectedResponseError
-            && (err.isTimeout || (err.httpStatus !== undefined && err.httpStatus >= 500));
+    /**
+     * Classify whether a transport error is transient and worth retrying.
+     *
+     * Retryable: timeouts, connection-level failures (`errorCategory:
+     * "network"` — DNS failure, ECONNREFUSED, TLS handshake error), and
+     * 5xx responses. Not retryable: 4xx, malformed-payload (`parse`) and
+     * response-shape errors — the gateway will produce the same bad
+     * payload on the next attempt — and `circuit_open`, which is the
+     * breaker's own fail-fast signal.
+     */
+    private isRetryable(err: SatimUnexpectedResponseError): boolean {
+        if (err.errorCategory === "circuit_open") return false;
+        if (err.httpStatus !== undefined) return err.httpStatus >= 500;
+        return err.isTimeout
+            || err.errorCategory === "timeout"
+            || err.errorCategory === "network";
+    }
+
+    /**
+     * Decide whether an error is evidence of gateway degradation and
+     * should count toward opening the breaker.
+     *
+     * Counted: timeouts, connection failures, 5xx, and malformed or
+     * non-object payloads (a gateway returning an HTML error page through
+     * its proxy is degraded, even though the HTTP status says 200).
+     *
+     * Not counted: 4xx (the SDK sent something the gateway disliked — a
+     * client-side problem that more waiting will not fix) and
+     * `circuit_open` (the breaker's own output, never its input).
+     */
+    private countsAsGatewayFailure(err: SatimUnexpectedResponseError): boolean {
+        if (err.errorCategory === "circuit_open") return false;
+        if (err.httpStatus !== undefined) return err.httpStatus >= 500;
+        return true;
+    }
+
+    /**
+     * Normalise anything thrown by `fetch` into a `SatimUnexpectedResponseError`.
+     *
+     * Abort detection matches on `name` rather than `instanceof DOMException`:
+     * the global `fetch` rejects aborts with a `DOMException`, but a custom
+     * `fetch` (the documented production path — see {@link HttpClientOptions.fetch})
+     * may reject with a plain `Error` or a library-specific class carrying
+     * the same `name`. An `instanceof` check misclassifies those as generic
+     * network errors, which loses the `isTimeout` flag callers branch on.
+     */
+    private toTransportError(error: unknown): SatimUnexpectedResponseError {
+        if (error instanceof SatimUnexpectedResponseError) return error;
+        if (isAbortError(error)) {
+            return new SatimUnexpectedResponseError(
+                `Request timed out after ${this.timeoutMs}ms`,
+                "timeout", undefined, { isTimeout: true },
+            );
+        }
+        return new SatimUnexpectedResponseError("Network or internal error", "network");
     }
 
     /**
      * Refuse to operate when TLS verification is disabled.
      *
-     * Called before every network attempt — checking once at construction
+     * Called at the start of every request — checking once at construction
      * would let a process set the env variable after the SDK was instantiated.
      *
      * @throws {@link SatimError} when `NODE_TLS_REJECT_UNAUTHORIZED=0` is in `process.env`.
@@ -225,14 +294,16 @@ export class HttpClientService {
     /**
      * Single request with retry + circuit breaker integration.
      *
-     * Circuit breaker accounting: each attempt's failure is counted at most
-     * once via the `counted` flag, regardless of which catch branch the
-     * exception flows through. Failure paths:
-     * - `!response.ok` 5xx: counted in the response-not-ok branch.
-     * - `AbortError` (timeout): counted in the abort branch.
-     * - `SatimUnexpectedResponseError` from JSON parse or response shape:
-     *   counted in the catch branch iff `isRetryable(error)` (which is false
-     *   for parse errors — those are not retried).
+     * Circuit breaker accounting: every attempt funnels through the single
+     * `catch` below, which normalises the error and then makes exactly one
+     * accounting decision. This matters more than it looks — the breaker
+     * requires that a `true` from `allowRequest()` be answered by exactly
+     * one `onSuccess()`/`onFailure()`. An exit path reporting neither both
+     * blinds the breaker (it never opens on that failure mode) and, if the
+     * attempt happened to be the `HALF_OPEN` probe, strands the breaker
+     * with `probeInFlight` set. Adding an early `throw` anywhere in the
+     * `try` block is therefore safe; adding one that bypasses this `catch`
+     * is not.
      *
      * @throws {@link SatimUnexpectedResponseError} on transport or
      *         response-shape failures. Wraps unknown errors as
@@ -243,6 +314,12 @@ export class HttpClientService {
         data: Record<string, unknown>,
         retryable: boolean,
     ): Promise<T> {
+        // Checked before the breaker gate so a configuration fault never
+        // consumes the single HALF_OPEN probe, and re-checked per request
+        // rather than once at construction so a process that disables TLS
+        // verification after instantiating the SDK is still caught.
+        this.assertTlsSafe();
+
         if (this.circuitBreaker && !this.circuitBreaker.allowRequest()) {
             throw new SatimUnexpectedResponseError(
                 `Circuit breaker is open after ${this.circuitBreaker.getConsecutiveFailures()} consecutive failures. ` +
@@ -262,10 +339,8 @@ export class HttpClientService {
             }
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-            let counted = false;
 
             try {
-                this.assertTlsSafe();
                 const response = await (this.fetchImpl ?? globalThis.fetch)(url, {
                     method: "POST",
                     headers: {
@@ -280,16 +355,10 @@ export class HttpClientService {
                 });
 
                 if (!response.ok) {
-                    const err = new SatimUnexpectedResponseError(
+                    throw new SatimUnexpectedResponseError(
                         `HTTP Error: ${response.status} ${response.statusText}`,
                         "http", undefined, { httpStatus: response.status },
                     );
-                    if (response.status >= 500) {
-                        this.circuitBreaker?.onFailure();
-                        counted = true;
-                        if (attempt < maxAttempts) { lastError = err; continue; }
-                    }
-                    throw err;
                 }
 
                 const text = await response.text();
@@ -306,27 +375,17 @@ export class HttpClientService {
                 this.circuitBreaker?.onSuccess();
                 return parsed;
             } catch (error) {
-                if (error instanceof SatimUnexpectedResponseError) {
-                    if (!counted && this.isRetryable(error)) {
-                        this.circuitBreaker?.onFailure();
-                        if (attempt < maxAttempts) { lastError = error; continue; }
-                    }
+                // A local guard tripping (TLS verification disabled) is a
+                // configuration fault, not a gateway signal: propagate it
+                // untouched and leave the breaker's counters alone, so
+                // fixing the environment does not leave a circuit open.
+                if (error instanceof SatimError && !(error instanceof SatimUnexpectedResponseError)) {
                     throw error;
                 }
-                if (error instanceof DOMException && error.name === "AbortError") {
-                    const err = new SatimUnexpectedResponseError(
-                        `Request timed out after ${this.timeoutMs}ms`,
-                        "timeout", undefined, { isTimeout: true },
-                    );
-                    this.circuitBreaker?.onFailure();
-                    if (attempt < maxAttempts) { lastError = err; continue; }
-                    throw err;
-                }
-                if (error instanceof SatimError) {
-                    this.circuitBreaker?.onFailure();
-                    throw error;
-                }
-                throw new SatimUnexpectedResponseError("Network or internal error", "network");
+                const err = this.toTransportError(error);
+                if (this.countsAsGatewayFailure(err)) this.circuitBreaker?.onFailure();
+                if (this.isRetryable(err) && attempt < maxAttempts) { lastError = err; continue; }
+                throw err;
             } finally {
                 clearTimeout(timeoutId);
             }

@@ -43,6 +43,8 @@ export class CircuitBreaker {
     private consecutiveFailures = 0;
     private openedAt: number | null = null;
     private probeInFlight = false;
+    /** Wall-clock time the current `HALF_OPEN` probe was admitted, for abandonment detection. */
+    private probeStartedAt: number | null = null;
     private readonly failureThreshold: number;
     private readonly resetTimeoutMs: number;
 
@@ -57,21 +59,26 @@ export class CircuitBreaker {
      * Mutates state on `OPEN → HALF_OPEN` transition when the reset
      * timeout has elapsed. In `HALF_OPEN`, admits at most one concurrent probe.
      *
-     * Callers MUST follow a `true` return with exactly one call to
+     * Callers SHOULD follow a `true` return with exactly one call to
      * {@link onSuccess} or {@link onFailure} after the request resolves.
+     * A caller that fails to do so cannot strand the breaker: a probe
+     * still unreported after `resetTimeoutMs` is treated as abandoned and
+     * a fresh probe is admitted. Without that guard a single unreported
+     * probe would leave `probeInFlight` set forever and the breaker would
+     * reject every subsequent request for the life of the process, with
+     * no timer able to recover it.
      */
     allowRequest(): boolean {
         if (this.state === "CLOSED") return true;
         if (this.state === "OPEN") {
             if (this.openedAt !== null && Date.now() - this.openedAt >= this.resetTimeoutMs) {
-                this.state = "HALF_OPEN";
-                this.probeInFlight = true;
+                this.startProbe();
                 return true;
             }
             return false;
         }
-        if (this.probeInFlight) return false;
-        this.probeInFlight = true;
+        if (this.probeInFlight && !this.isProbeAbandoned()) return false;
+        this.startProbe();
         return true;
     }
 
@@ -79,8 +86,31 @@ export class CircuitBreaker {
     onSuccess(): void {
         this.consecutiveFailures = 0;
         this.openedAt = null;
-        this.probeInFlight = false;
+        this.endProbe();
         this.state = "CLOSED";
+    }
+
+    /** Enter `HALF_OPEN` with a single admitted probe. */
+    private startProbe(): void {
+        this.state = "HALF_OPEN";
+        this.probeInFlight = true;
+        this.probeStartedAt = Date.now();
+    }
+
+    /** Clear probe bookkeeping once a probe's outcome has been reported. */
+    private endProbe(): void {
+        this.probeInFlight = false;
+        this.probeStartedAt = null;
+    }
+
+    /**
+     * True when the in-flight probe has gone unreported for at least
+     * `resetTimeoutMs` — the caller crashed, threw past its accounting, or
+     * otherwise never reported an outcome.
+     */
+    private isProbeAbandoned(): boolean {
+        return this.probeStartedAt !== null
+            && Date.now() - this.probeStartedAt >= this.resetTimeoutMs;
     }
 
     /**
@@ -91,7 +121,7 @@ export class CircuitBreaker {
      */
     onFailure(): void {
         this.consecutiveFailures++;
-        this.probeInFlight = false;
+        this.endProbe();
         if (this.state === "HALF_OPEN" || this.consecutiveFailures >= this.failureThreshold) {
             this.state = "OPEN";
             this.openedAt = Date.now();
