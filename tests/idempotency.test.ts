@@ -1,6 +1,7 @@
 import { expect, test, describe, vi } from "vitest";
 import { Satim, SatimInvalidArgumentError, SatimDuplicateOrderError, SatimGatewayError } from "../src";
 import { deriveIdempotencyKey, deriveOrderNumber } from "../src/utils";
+import { assertOrderNumber } from "../src/validation";
 
 function makeSatim(mockRequest?: (...args: any[]) => Promise<any>) {
     const satim = new Satim({ username: "u", password: "p", terminalId: "t" });
@@ -73,14 +74,27 @@ describe("deriveIdempotencyKey", () => {
 // ─── deriveOrderNumber ──────────────────────────────────────────────
 
 describe("deriveOrderNumber", () => {
-    test("produces deterministic 10-char satim-module string", () => {
+    test("produces a deterministic 10-char alphanumeric string", () => {
         const a = deriveOrderNumber("cart-1");
         const b = deriveOrderNumber("cart-1");
         expect(a).toBe(b);
         expect(typeof a).toBe("string");
-        expect(a).toMatch(/^\d{10}$/);
-        expect(Number(a)).toBeGreaterThanOrEqual(1_000_000_000);
-        expect(Number(a)).toBeLessThanOrEqual(9_999_999_999);
+        // Base-36 over SATIM's AN.10 alphabet, always exactly 10 chars.
+        expect(a).toMatch(/^[a-z0-9]{10}$/);
+        expect(a).toHaveLength(10);
+    });
+
+    test("output is accepted by the orderNumber validator (AN.10)", () => {
+        for (let i = 0; i < 500; i++) {
+            expect(() => assertOrderNumber(deriveOrderNumber(`cart-${i}`))).not.toThrow();
+        }
+    });
+
+    test("collision resistance is far beyond the previous 10-digit space", () => {
+        // The old 9e9 numeric space collided at ~21k refs in this exact loop.
+        const seen = new Set<string>();
+        for (let i = 0; i < 200_000; i++) seen.add(deriveOrderNumber(`ORD-${i}`));
+        expect(seen.size).toBe(200_000);
     });
 
     test("different merchantRef produces different number", () => {

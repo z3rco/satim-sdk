@@ -13,8 +13,8 @@
  * @file
  */
 
-import { createHash } from "node:crypto";
-import { toMinorUnits } from "./money";
+import { sha256Hex, hexToBase36, ORDER_NUMBER_LENGTH } from "./crypto.js";
+import { toMinorUnits } from "./money.js";
 
 /** Domain-separation tag distinguishing capture vs hold flows. */
 export type Mode = "register" | "preauth";
@@ -58,20 +58,32 @@ export function deriveIdempotencyKey(params: {
     const mode = params.mode ?? "register";
     const minor = toMinorUnits(params.amount);
     const input = `${mode}|${params.merchantRef.trim()}|${minor}|${params.currency ?? "012"}`;
-    return `dk_${createHash("sha256").update(input).digest("hex")}`;
+    return `dk_${sha256Hex(input)}`;
 }
 
 /**
- * Derive a stable 10-digit SATIM order number from a merchant reference.
+ * Derive a stable 10-character SATIM order number from a merchant reference.
  *
- * Maps the first 48 bits of SHA-256 into the inclusive-exclusive range
- * `[1_000_000_000, 10_000_000_000)`, satisfying SATIM's `orderNumber`
- * format constraint (AN.10). Same inputs always produce the same output.
+ * Maps 64 bits of SHA-256 onto a 10-character base-36 string (digits and
+ * lowercase letters), satisfying SATIM's `orderNumber` format constraint
+ * (AN.10 — alphanumeric, 10 characters). Same inputs always produce the
+ * same output.
  *
- * Modulo bias: `2^48 mod 9_000_000_000 ≠ 0`, so output values are not
- * perfectly uniform. The bias is ~3% (some 10-digit numbers appear 32
- * times across the 2^48 input space while others appear 31). Acceptable
- * for order-number derivation; not suitable for cryptographic primitives.
+ * # Collision resistance
+ *
+ * The output space is `36^10 ≈ 3.66 × 10^15`, putting the 50 %
+ * birthday-collision point near 60 million distinct merchant references.
+ * The previous 10-*digit* encoding had a `9 × 10^9` space, where the same
+ * point falls at roughly 95 000 references — a merchant processing a few
+ * hundred orders a day would hit a collision within a year, and a
+ * collision here is not benign: two different orders derive the same
+ * `orderNumber`, the gateway rejects the second as a duplicate
+ * (`ErrorCode: "1"`), and the caller receives a
+ * {@link SatimDuplicateOrderError} pointing at an order they never placed.
+ *
+ * If your SATIM terminal is provisioned to accept numeric order numbers
+ * only, set one explicitly with `.orderNumber()` instead of relying on
+ * this derivation.
  */
 export function deriveOrderNumber(
     merchantRef: string,
@@ -79,7 +91,5 @@ export function deriveOrderNumber(
     mode: Mode = "register",
 ): string {
     const input = `ordnum|${mode}|${merchantRef.trim()}|${currency}`;
-    const hash = createHash("sha256").update(input).digest("hex");
-    const raw = parseInt(hash.slice(0, 12), 16);
-    return String(1_000_000_000 + (raw % 9_000_000_000));
+    return hexToBase36(sha256Hex(input), ORDER_NUMBER_LENGTH);
 }

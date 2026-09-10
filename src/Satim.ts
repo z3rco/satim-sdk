@@ -22,20 +22,20 @@
  * @file
  */
 
-import { randomInt } from "node:crypto";
-import { SatimConfig } from "./config";
-import { HttpClientService, type HttpClientOptions } from "./client";
+import { SatimConfig } from "./config.js";
+import { HttpClientService, type HttpClientOptions } from "./client.js";
 import {
     SatimMissingDataError, SatimInvalidArgumentError,
     SatimDuplicateOrderError, SatimGatewayError,
-} from "./exceptions";
-import type { SatimCredentials, RegisterOrderResponse, ConfirmOrderResponse } from "./types";
-import { RegisterResponse } from "./responses/register";
-import { ConfirmResponse } from "./responses/confirm";
-import { toMinorUnits } from "./money";
-import { assertOrderId, assertConfirmAmount, assertRefundAmount } from "./validation";
-import { deriveIdempotencyKey, deriveOrderNumber } from "./idempotency";
-import { WebhookHandler, type WebhookHandlerOptions } from "./webhook/handler";
+} from "./exceptions.js";
+import type { SatimCredentials, RegisterOrderResponse, ConfirmOrderResponse } from "./types.js";
+import { RegisterResponse } from "./responses/register.js";
+import { ConfirmResponse } from "./responses/confirm.js";
+import { toMinorUnits } from "./money.js";
+import { assertOrderId, assertConfirmAmount, assertRefundAmount } from "./validation.js";
+import { deriveIdempotencyKey, deriveOrderNumber } from "./idempotency.js";
+import { randomOrderNumber } from "./crypto.js";
+import { WebhookHandler, type WebhookHandlerOptions } from "./webhook/handler.js";
 
 /** Key always stripped from caller-supplied `jsonParams` then set from the credential store. */
 const FORCE_TERMINAL_KEY = "force_terminal_id";
@@ -387,9 +387,16 @@ export class Satim extends SatimConfig {
         }
     }
 
-    /** Return the configured order number, or generate a random 10-digit one via CSPRNG. */
+    /**
+     * Return the configured order number, or generate a random
+     * 10-character base-36 one from the runtime CSPRNG.
+     *
+     * See {@link randomOrderNumber} for why the alphabet is base-36 rather
+     * than decimal: the 36^10 space keeps accidental collisions negligible
+     * across a merchant's whole order history.
+     */
     private getFinalOrderNumber(): string {
-        return this._orderNumber ?? String(randomInt(1_000_000_000, 10_000_000_000));
+        return this._orderNumber ?? randomOrderNumber();
     }
 
     /**
