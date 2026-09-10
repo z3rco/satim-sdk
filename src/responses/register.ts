@@ -12,9 +12,9 @@
  * @file
  */
 
-import { SatimMissingDataError, SatimInvalidArgumentError } from "../exceptions";
-import type { RegisterOrderResponse } from "../types";
-import { validateRegisterSchema } from "./schema";
+import { SatimMissingDataError, SatimInvalidArgumentError } from "../exceptions.js";
+import type { RegisterOrderResponse } from "../types.js";
+import { validateRegisterSchema } from "./schema.js";
 
 /**
  * Hostnames permitted as redirect targets.

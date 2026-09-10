@@ -24,7 +24,7 @@
  * @file
  */
 
-import { SatimInvalidArgumentError } from "./exceptions";
+import { SatimInvalidArgumentError } from "./exceptions.js";
 
 /** Literal hostnames always rejected regardless of resolution. */
 const BLOCKED_HOSTNAMES = new Set([

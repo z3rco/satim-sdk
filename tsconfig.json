@@ -4,9 +4,9 @@
             "ESNext",
             "DOM"
         ],
-        "module": "ESNext",
+        "module": "NodeNext",
         "target": "ESNext",
-        "moduleResolution": "bundler",
+        "moduleResolution": "nodenext",
         "outDir": "./dist",
         "declaration": true,
         "strict": true,

@@ -16,7 +16,7 @@
  * @file
  */
 
-/** Strict allowed format: alphasatim-module and hyphens, 1–128 chars. */
+/** Strict allowed format: alphanumeric and hyphens, 1–128 chars. */
 const ORDER_ID_PATTERN = /^[a-zA-Z0-9\-]{1,128}$/;
 
 /**

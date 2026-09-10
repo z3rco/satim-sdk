@@ -19,14 +19,14 @@
  * @file
  */
 
-import type { Language, CurrencyCode, SatimCredentials } from "./types";
-import { SatimInvalidArgumentError, SatimMissingDataError } from "./exceptions";
-import { assertSafeUrl } from "./ssrf";
+import type { Language, CurrencyCode, SatimCredentials } from "./types.js";
+import { SatimInvalidArgumentError, SatimMissingDataError } from "./exceptions.js";
+import { assertSafeUrl } from "./ssrf.js";
 import {
     assertRegisterAmount, assertDescription, assertLanguage,
     assertOrderNumber, assertTimeout, assertIdempotencyKey,
     assertUserField, assertCredentialString,
-} from "./validation";
+} from "./validation.js";
 
 interface Creds { username: string; password: string; terminalId: string; }
 
@@ -218,7 +218,7 @@ export class SatimConfig {
     }
 
     /**
-     * Set a custom 1-10 character alphasatim-module order number.
+     * Set a custom 1-10 character alphanumeric order number.
      * Defaults to a CSPRNG-generated 10-digit value if unset at register time.
      * @throws {@link SatimInvalidArgumentError} on format violations.
      */

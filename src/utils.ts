@@ -7,7 +7,7 @@
  * (deterministic key derivation).
  *
  * No logic lives in this file. New code should import from the package
- * root: `import { toMinorUnits, deriveIdempotencyKey } from "satim-module"`.
+ * root: `import { toMinorUnits, deriveIdempotencyKey } from "satim-sdk"`.
  * @file
  */
 
@@ -16,9 +16,9 @@ export {
     hasSubCentimePrecision,
     isWholeMinorUnits,
     toMinorUnits,
-} from "./money";
+} from "./money.js";
 
 export {
     deriveIdempotencyKey,
     deriveOrderNumber,
-} from "./idempotency";
+} from "./idempotency.js";

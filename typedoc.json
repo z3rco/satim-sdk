@@ -2,7 +2,7 @@
     "$schema": "https://typedoc.org/schema.json",
     "entryPoints": ["src/index.ts"],
     "out": "docs/api",
-    "name": "satim-module",
+    "name": "satim-sdk",
     "readme": "README.md",
     "projectDocuments": [
         "ARCHITECTURE.md",

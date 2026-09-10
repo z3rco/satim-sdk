@@ -7,9 +7,9 @@
  * runtime schema validation in {@link ./responses/schema}.
  *
  * No logic lives in this file. New code should import from the package
- * root: `import { RegisterResponse, ConfirmResponse } from "satim-module"`.
+ * root: `import { RegisterResponse, ConfirmResponse } from "satim-sdk"`.
  * @file
  */
 
-export { RegisterResponse } from "./responses/register";
-export { ConfirmResponse } from "./responses/confirm";
+export { RegisterResponse } from "./responses/register.js";
+export { ConfirmResponse } from "./responses/confirm.js";

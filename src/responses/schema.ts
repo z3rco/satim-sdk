@@ -13,8 +13,8 @@
  * @file
  */
 
-import { SatimUnexpectedResponseError } from "../exceptions";
-import type { RegisterOrderResponse, ConfirmOrderResponse } from "../types";
+import { SatimUnexpectedResponseError } from "../exceptions.js";
+import type { RegisterOrderResponse, ConfirmOrderResponse } from "../types.js";
 
 /** True for non-array plain objects (excludes `null`, arrays, primitives). */
 function isObject(raw: unknown): raw is Record<string, unknown> {

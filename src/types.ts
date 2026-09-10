@@ -58,8 +58,8 @@ export interface RegisterOrderResponse {
 }
 
 /**
- * Response from `/confirmOrder.do`, `/getOrderStatus.do`, `/refund.do`,
- * and `/reverse.do`.
+ * Response from `/public/acknowledgeTransaction.do` (confirm),
+ * `/getOrderStatus.do`, `/refund.do`, and `/reverse.do`.
  *
  * `OrderStatus` follows the SATIM/BPC state machine:
  *

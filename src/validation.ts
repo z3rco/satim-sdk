@@ -14,9 +14,9 @@
  * @file
  */
 
-import { SatimInvalidArgumentError } from "./exceptions";
-import { MAX_SAFE_AMOUNT, toMinorUnits, hasSubCentimePrecision } from "./money";
-import type { Language } from "./types";
+import { SatimInvalidArgumentError } from "./exceptions.js";
+import { MAX_SAFE_AMOUNT, toMinorUnits, hasSubCentimePrecision } from "./money.js";
+import type { Language } from "./types.js";
 
 /** Keys rejected from user-defined `jsonParams` — terminal-ID injection and prototype pollution. */
 const RESERVED_JSON_KEYS = new Set([
