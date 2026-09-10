@@ -260,6 +260,8 @@ For the full threat model, see [`SECURITY.md`](./SECURITY.md).
 - [`src/README.md`](./src/README.md) — module map and dependency order.
 - [`src/responses/README.md`](./src/responses/README.md) — response wrappers and the status predicate contract.
 - [`src/webhook/README.md`](./src/webhook/README.md) — zero-trust verification flow and distributed deployment notes.
+- [`examples/shop/README.md`](./examples/shop/README.md) — a storefront you can click through, no credentials needed.
+- [`mock/README.md`](./mock/README.md) — mock gateway, test cards, 3-D Secure, fault injection.
 - [`SECURITY.md`](./SECURITY.md) — threat model, mitigations, known limitations.
 - **API reference** — generated locally with `npm run docs` (outputs to `docs/api/`).
 
@@ -271,6 +273,9 @@ bun test          # run the unit test suite (vitest)
 npm run typecheck # strict type checking (any runtime)
 npm run build     # compile to dist/
 npm run smoke     # load dist/ in plain Node and check the public API
+npm run mock      # mock SATIM gateway with a real card-entry page
+npm run mock:demo # 13-step lifecycle walkthrough against the mock
+npm run shop      # demo storefront + mock gateway (examples/shop)
 npm run docs      # generate TypeDoc API reference
 ```
 
