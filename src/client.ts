@@ -13,6 +13,7 @@ import {
 } from "./exceptions.js";
 import { CircuitBreaker, type CircuitBreakerOptions } from "./circuit-breaker.js";
 import { sha256Hex } from "./crypto.js";
+import { isPrivateHost } from "./ssrf.js";
 
 export type { CircuitBreakerOptions } from "./circuit-breaker.js";
 
@@ -62,6 +63,19 @@ export interface HttpClientOptions {
      * pooling/HTTP2; leave unset on edge runtimes, which already pool.
      */
     fetch?: typeof globalThis.fetch;
+    /**
+     * Override the REST root, e.g. `"http://localhost:8787/payment/rest"`.
+     *
+     * SATIM assigns some merchants a host other than the two defaults, and
+     * local development needs to reach a mock. Give the root without a
+     * trailing slash and without the endpoint segment; it replaces the
+     * host `testMode` would otherwise select.
+     *
+     * Plaintext `http:` is accepted only for loopback and private hosts —
+     * every request carries the merchant password in its body, so a
+     * plaintext URL to a public host is refused rather than trusted.
+     */
+    baseUrl?: string;
 }
 
 /**
@@ -72,6 +86,8 @@ export interface HttpClientOptions {
 export class HttpClientService {
     private readonly API_URL = "https://cib.satim.dz/payment/rest";
     private readonly TEST_API_URL = "https://test2.satim.dz/payment/rest";
+    /** Caller-supplied REST root; overrides the `testMode` default when set. */
+    private readonly baseUrl: string | undefined;
     private static readonly DEFAULT_TIMEOUT_MS = 30_000;
     private static readonly DEFAULT_MAX_RETRIES = 2;
     private static readonly BASE_RETRY_DELAY_MS = 500;
@@ -102,6 +118,32 @@ export class HttpClientService {
             ? null
             : new CircuitBreaker(options?.circuitBreaker);
         this.fetchImpl = options?.fetch; // undefined → use globalThis.fetch lazily at call time
+        this.baseUrl = HttpClientService.normaliseBaseUrl(options?.baseUrl);
+    }
+
+    /**
+     * Validate an overridden REST root and strip any trailing slash.
+     *
+     * @throws {@link SatimInvalidArgumentError} when the URL is malformed,
+     *         not HTTP(S), or plaintext `http:` to a non-private host.
+     */
+    private static normaliseBaseUrl(raw: string | undefined): string | undefined {
+        if (raw === undefined) return undefined;
+        let parsed: URL;
+        try {
+            parsed = new URL(raw);
+        } catch {
+            throw new SatimInvalidArgumentError("baseUrl must be a valid http/https URL.");
+        }
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            throw new SatimInvalidArgumentError("baseUrl must be a valid http/https URL.");
+        }
+        if (parsed.protocol === "http:" && !isPrivateHost(parsed.hostname)) {
+            throw new SatimInvalidArgumentError(
+                "baseUrl must use HTTPS for non-local hosts: every request body carries the merchant password.",
+            );
+        }
+        return raw.replace(/\/+$/, "");
     }
 
     /**
@@ -141,7 +183,7 @@ export class HttpClientService {
 
     /** @returns The base URL for the active environment. */
     private getApiUrl(): string {
-        return this.testMode ? this.TEST_API_URL : this.API_URL;
+        return this.baseUrl ?? (this.testMode ? this.TEST_API_URL : this.API_URL);
     }
 
     /**

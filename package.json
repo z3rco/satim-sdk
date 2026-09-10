@@ -19,6 +19,8 @@
   "scripts": {
     "build": "tsc",
     "smoke": "node scripts/smoke.mjs",
+    "mock": "node mock/gateway.mjs",
+    "mock:demo": "node mock/demo.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "docs": "typedoc",

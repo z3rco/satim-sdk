@@ -82,6 +82,21 @@ const cache = new Set<string>();
  *         non-HTTP(S), targets a blocked hostname, uses a private IPv4
  *         or IPv6 range, or uses a non-standard IP encoding.
  */
+/**
+ * True when a hostname is loopback, private, or otherwise internal.
+ *
+ * Shared with the transport, which allows a plaintext `http:` base URL
+ * only for such hosts: sending merchant credentials unencrypted is
+ * acceptable to a loopback mock and never acceptable to a public host.
+ */
+export function isPrivateHost(hostname: string): boolean {
+    const host = hostname.toLowerCase();
+    if (BLOCKED_HOSTNAMES.has(host)) return true;
+    if (PRIVATE_IPV4.some((p) => p.test(host))) return true;
+    const v6 = normalizeIpv6(host);
+    return Boolean(v6 && PRIVATE_IPV6.some((p) => p.test(v6)));
+}
+
 export function assertSafeUrl(urlStr: string, errorPrefix: string): void {
     if (cache.has(urlStr)) return;
 

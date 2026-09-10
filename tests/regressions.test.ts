@@ -318,3 +318,81 @@ describe("gateway numeric fields are accepted on both schemas", () => {
             .rejects.toThrow(/must be a string or number/);
     });
 });
+
+// ─── Configurable base URL ───────────────────────────────────────────
+
+describe("baseUrl override", () => {
+    test("replaces the host the endpoint is appended to", async () => {
+        let seen = "";
+        const client = new HttpClientService(false, {
+            baseUrl: "http://localhost:8787/payment/rest",
+            fetch: (async (url: any) => {
+                seen = String(url);
+                return new Response(JSON.stringify({ OrderStatus: 2 }), { status: 200 });
+            }) as any,
+        });
+        await client.handleApiRequest("/getOrderStatus.do", { orderId: "x" });
+        expect(seen).toBe("http://localhost:8787/payment/rest/getOrderStatus.do");
+    });
+
+    test("a trailing slash does not produce a double slash", async () => {
+        let seen = "";
+        const client = new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest/",
+            fetch: (async (url: any) => {
+                seen = String(url);
+                return new Response("{}", { status: 200 });
+            }) as any,
+        });
+        await client.handleApiRequest("/refund.do", {});
+        expect(seen).toBe("https://gw.satim.dz/payment/rest/refund.do");
+    });
+
+    test("overrides testMode rather than being overridden by it", async () => {
+        let seen = "";
+        const client = new HttpClientService(true, {
+            baseUrl: "http://127.0.0.1:9999/payment/rest",
+            fetch: (async (url: any) => {
+                seen = String(url);
+                return new Response("{}", { status: 200 });
+            }) as any,
+        });
+        await client.handleApiRequest("/getOrderStatus.do", {});
+        expect(seen).toContain("127.0.0.1:9999");
+        expect(seen).not.toContain("satim.dz");
+    });
+
+    test("plaintext http is allowed only for local hosts", () => {
+        for (const url of [
+            "http://localhost:8787/payment/rest",
+            "http://127.0.0.1:8787/payment/rest",
+            "http://[::1]:8787/payment/rest",
+            "http://192.168.1.10/payment/rest",
+        ]) {
+            expect(() => new HttpClientService(false, { baseUrl: url })).not.toThrow();
+        }
+        // Credentials travel in every request body, so plaintext to a public
+        // host must be refused rather than trusted.
+        for (const url of ["http://cib.satim.dz/payment/rest", "http://evil.example/payment/rest"]) {
+            expect(() => new HttpClientService(false, { baseUrl: url })).toThrow(/HTTPS/);
+        }
+    });
+
+    test("rejects malformed and non-http schemes", () => {
+        for (const url of ["not a url", "ftp://gw.satim.dz/rest", "file:///etc/passwd", ""]) {
+            expect(() => new HttpClientService(false, { baseUrl: url })).toThrow(/valid http\/https URL/);
+        }
+    });
+
+    test("omitting it keeps the built-in hosts", async () => {
+        const seen: string[] = [];
+        const fetchImpl = (async (url: any) => {
+            seen.push(String(url));
+            return new Response("{}", { status: 200 });
+        }) as any;
+        await new HttpClientService(false, { fetch: fetchImpl }).handleApiRequest("/getOrderStatus.do", {});
+        await new HttpClientService(true, { fetch: fetchImpl }).handleApiRequest("/getOrderStatus.do", {});
+        expect(seen[0]).toContain("cib.satim.dz");
+        expect(seen[1]).toContain("test2.satim.dz");
+    });
+});

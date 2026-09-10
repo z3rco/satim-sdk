@@ -270,6 +270,8 @@ bun test          # run the unit test suite (vitest)
 npm run typecheck # strict type checking (any runtime)
 npm run build     # compile to dist/
 npm run smoke     # load dist/ in plain Node and check the public API
+npm run mock      # local mock SATIM gateway (see mock/README.md)
+npm run mock:demo # full payment lifecycle against the mock, no credentials
 npm run docs      # generate TypeDoc API reference
 ```
 
