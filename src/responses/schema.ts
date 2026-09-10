@@ -18,8 +18,12 @@ function isObject(raw: unknown): raw is Record<string, unknown> {
 }
 
 /**
- * Assert `raw` matches `RegisterOrderResponse` shape: non-empty
- * `orderId`/`formUrl` strings, and `errorCode` (if present) a string.
+ * Assert `raw` matches `RegisterOrderResponse` shape (non-empty
+ * `orderId`/`formUrl`) and normalise `errorCode` to string.
+ *
+ * The live gateway emits `errorCode` as a JSON number — a bad-credential
+ * probe against test.satim.dz returns `{"errorCode":5,...}` — so rejecting
+ * non-strings here threw on a successful `errorCode: 0` registration.
  * @throws {@link SatimUnexpectedResponseError} with `errorCategory: "gateway"`.
  */
 export function validateRegisterSchema(raw: unknown): asserts raw is RegisterOrderResponse {
@@ -32,9 +36,7 @@ export function validateRegisterSchema(raw: unknown): asserts raw is RegisterOrd
     if (typeof raw.formUrl !== "string" || !raw.formUrl) {
         throw new SatimUnexpectedResponseError("Malformed registration response: missing or invalid formUrl", "gateway");
     }
-    if (raw.errorCode !== undefined && typeof raw.errorCode !== "string") {
-        throw new SatimUnexpectedResponseError("Malformed registration response: errorCode must be a string", "gateway");
-    }
+    coerceNumericString(raw, "errorCode");
 }
 
 /**
@@ -57,6 +59,7 @@ export function validateConfirmSchema(raw: unknown): asserts raw is ConfirmOrder
 
 /**
  * Coerce a number-or-string field to string, in place. Reject other types.
+ * Shared by both schemas: the gateway is inconsistent about which it sends.
  * @throws {@link SatimUnexpectedResponseError} when `raw[field]` is
  *         neither `undefined`, `number`, nor `string`.
  */

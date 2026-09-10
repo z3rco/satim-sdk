@@ -286,3 +286,35 @@ describe("webhook rejections are distinguishable", () => {
         expect(await handler.verify({ orderId: "OTHER" })).toBeNull();
     });
 });
+
+// ─── Gateway wire format ─────────────────────────────────────────────
+
+describe("gateway numeric fields are accepted on both schemas", () => {
+    test("a registration carrying a numeric errorCode is not rejected", async () => {
+        // The live gateway returns JSON numbers: a bad-credential probe against
+        // test.satim.dz answers {"errorCode":5,"errorMessage":"Access denied"}.
+        // Requiring a string here threw on every successful errorCode: 0
+        // registration, which would have blocked the first real transaction.
+        const satim = stubbedSatim(() =>
+            Promise.resolve({ orderId: "ord-1", formUrl: "https://test.satim.dz/pay/x", errorCode: 0 }));
+        const res = await satim.amount(5000).returnUrl("https://shop.dz/r").register();
+        expect(res.getOrderId()).toBe("ord-1");
+        expect(res.getRawResponse().errorCode).toBe("0");
+    });
+
+    test("string errorCode and absent errorCode still work", async () => {
+        for (const extra of [{ errorCode: "0" }, {}]) {
+            const satim = stubbedSatim(() =>
+                Promise.resolve({ orderId: "ord-2", formUrl: "https://test.satim.dz/pay/y", ...extra }));
+            const res = await satim.amount(5000).returnUrl("https://shop.dz/r").register();
+            expect(res.getOrderId()).toBe("ord-2");
+        }
+    });
+
+    test("a non-scalar errorCode is still rejected", async () => {
+        const satim = stubbedSatim(() =>
+            Promise.resolve({ orderId: "ord-3", formUrl: "https://test.satim.dz/pay/z", errorCode: { nested: true } }));
+        await expect(satim.amount(5000).returnUrl("https://shop.dz/r").register())
+            .rejects.toThrow(/must be a string or number/);
+    });
+});

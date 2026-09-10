@@ -1262,11 +1262,23 @@ describe("10. Error handling", () => {
         expect(() => new RegisterResponse({ orderId: "abc" } as any)).toThrow(SatimUnexpectedResponseError);
     });
 
-    test("validateRegisterSchema rejects numeric errorCode", () => {
-        expect(() => new RegisterResponse({
+    test("validateRegisterSchema normalises a numeric errorCode to string", () => {
+        // The live gateway sends JSON numbers, not strings: a bad-credential
+        // probe to test.satim.dz answers {"errorCode":5,...}. Rejecting them
+        // here threw on every successful errorCode: 0 registration.
+        const res = new RegisterResponse({
             orderId: "abc",
             formUrl: "https://test.satim.dz/form",
             errorCode: 0 as any,
+        });
+        expect(res.getRawResponse().errorCode).toBe("0");
+    });
+
+    test("validateRegisterSchema still rejects a non-scalar errorCode", () => {
+        expect(() => new RegisterResponse({
+            orderId: "abc",
+            formUrl: "https://test.satim.dz/form",
+            errorCode: ["0"] as any,
         })).toThrow(SatimUnexpectedResponseError);
     });
 
