@@ -316,6 +316,17 @@ export class HttpClientService {
                 });
 
                 if (!response.ok) {
+                    // Not every endpoint reports bad credentials the same way.
+                    // register.do answers 200 with errorCode 5, while
+                    // acknowledgeTransaction.do answers 401 with a bare JSON
+                    // string. Both mean the same thing, so both must raise the
+                    // same typed error — otherwise the exception a caller has
+                    // to catch depends on which method they happened to call.
+                    if (response.status === 401 || response.status === 403) {
+                        throw new SatimInvalidCredentialsError(
+                            "Invalid username or password or terminal ID",
+                        );
+                    }
                     throw new SatimUnexpectedResponseError(
                         `HTTP Error: ${response.status} ${response.statusText}`,
                         "http", undefined, { httpStatus: response.status },

@@ -230,6 +230,40 @@ function handleStatus(form, res) {
     return sendJson(res, orderPayload(order));
 }
 
+/** `/deposit.do` — capture a pre-authorized order (BPC's second phase). */
+function handleDeposit(form, res) {
+    const order = orders.get(form.orderId);
+    if (!order) return sendJson(res, capitalised(UNKNOWN_ORDER));
+    if (order.orderStatus !== "1" && order.orderStatus !== "8") {
+        return sendJson(res, { ErrorCode: wire(7), ErrorMessage: "Order is not awaiting capture" });
+    }
+    // BPC: amount=0 captures the whole order. A smaller amount is a partial
+    // capture, which leaves the order in status 8 with more still to come.
+    const asked = Number(form.amount ?? 0);
+    const remaining = order.amountMinor - order.depositAmountMinor;
+    const amount = asked === 0 ? remaining : Math.min(asked, remaining);
+    order.depositAmountMinor += amount;
+    order.orderStatus = order.depositAmountMinor >= order.amountMinor ? "2" : "8";
+    log(`deposit: ${order.orderId} captured ${amount} -> OrderStatus ${order.orderStatus}`);
+    return sendJson(res, orderPayload(order));
+}
+
+/** `/decline.do` — cancel an order that was never paid. */
+function handleDecline(form, res) {
+    const order = orders.get(form.orderId);
+    if (!order) return sendJson(res, capitalised(UNKNOWN_ORDER));
+    if (!form.orderNumber) {
+        return sendJson(res, { ErrorCode: wire(4), ErrorMessage: "Missing required parameter: orderNumber" });
+    }
+    if (order.orderStatus === "2") {
+        return sendJson(res, { ErrorCode: wire(7), ErrorMessage: "Completed orders cannot be cancelled" });
+    }
+    order.orderStatus = "6";                     // DECLINED
+    order.outcome = { ...CANCELLED, orderStatus: "6" };
+    log(`decline: ${order.orderId} cancelled`);
+    return sendJson(res, orderPayload(order));
+}
+
 function handleRefund(form, res) {
     const order = orders.get(form.orderId);
     if (!order) return sendJson(res, capitalised(UNKNOWN_ORDER));
@@ -557,6 +591,9 @@ const REST = {
     "/payment/rest/registerPreAuth.do": (form, res) => handleRegister(form, res, { preAuth: true }),
     "/payment/rest/public/acknowledgeTransaction.do": handleConfirm,
     "/payment/rest/getOrderStatus.do": handleStatus,
+    "/payment/rest/getOrderStatusExtended.do": handleStatus,
+    "/payment/rest/deposit.do": handleDeposit,
+    "/payment/rest/decline.do": handleDecline,
     "/payment/rest/refund.do": handleRefund,
     "/payment/rest/reverse.do": handleReverse,
 };

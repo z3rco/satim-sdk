@@ -80,16 +80,31 @@ export class ConfirmResponse {
 
     // ─── Leaf predicates (mutually exclusive: at most one returns true) ──
 
-    /** OrderStatus `"2"`: deposited (success). */
+    /** OrderStatus `"2"`: authorized and captured. */
     public isSuccessful(): boolean { return this._raw.OrderStatus === "2"; }
     /** OrderStatus `"4"`: refunded. */
     public isRefunded(): boolean { return this._raw.OrderStatus === "4"; }
-    /** OrderStatus `"0"`: registered but not paid yet. */
-    public isPending(): boolean { return this._raw.OrderStatus === "0"; }
-    /** OrderStatus `"3"`: authorization voided / reversed. */
+    /**
+     * Payment is still in flight and must be re-checked, never treated as
+     * failed. Covers three BPC states: `"0"` registered but unpaid, `"5"`
+     * the issuer's ACS has started 3-D Secure authentication, and `"7"`
+     * pending payment.
+     */
+    public isPending(): boolean {
+        const s = this._raw.OrderStatus;
+        return s === "0" || s === "5" || s === "7";
+    }
+    /** OrderStatus `"3"`: authorization canceled / reversed. */
     public isReversed(): boolean { return this._raw.OrderStatus === "3"; }
-    /** OrderStatus `"1"`: funds held, awaiting capture. */
+    /** OrderStatus `"1"`: funds held, awaiting capture via {@link Satim.deposit}. */
     public isPreAuthorized(): boolean { return this._raw.OrderStatus === "1"; }
+    /**
+     * OrderStatus `"8"`: part of the order has been captured and more
+     * captures are expected. Money has moved, so this is not a failure —
+     * but it is not the final state either, and `Amount` will not match
+     * what has actually been taken. Read {@link getDepositAmount}.
+     */
+    public isPartiallyCaptured(): boolean { return this._raw.OrderStatus === "8"; }
 
     // ─── Composite predicates ────────────────────────────────────────────
     // Each early-returns `false` when an earlier predicate in the chain is
@@ -97,24 +112,34 @@ export class ConfirmResponse {
 
     /** Session timed out (`actionCode === "-2007"`), only when no terminal OrderStatus is present. */
     public isExpired(): boolean {
-        if (this.hasTerminalOrderStatus()) return false;
+        if (this.hasKnownOrderStatus()) return false;
         return this._raw.actionCode === "-2007";
     }
 
-    /** Customer cancelled (`actionCode === "10"` or message matches "payment is cancelled"). */
+    /**
+     * Customer cancelled. Detected by `actionCode === "10"`.
+     *
+     * The `ErrorMessage` fallback below is a last resort and only matches
+     * English text: BPC states that "errorMessage value can vary, so it
+     * should not be hardcoded", and the gateway returns it in whatever
+     * `language` the request asked for — which this SDK defaults to `"FR"`.
+     * Treat `actionCode` as authoritative.
+     */
     public isCancelled(): boolean {
-        if (this.hasTerminalOrderStatus() || this.isExpired()) return false;
+        if (this.hasKnownOrderStatus() || this.isExpired()) return false;
         if (!this.hasErrorSignal()) return false;
         if (this._raw.actionCode === "10") return true;
         return this._raw.ErrorMessage?.toLowerCase().includes("payment is cancelled") ?? false;
     }
 
     /**
-     * Bank declined (`actionCode ∈ {"2003","111"}`, or `respCode` outside
-     * `{"", "00"}`, or message matches "payment is declined").
+     * Bank declined: OrderStatus `"6"`, or `actionCode ∈ {"2003","111"}`,
+     * or `respCode` outside `{"", "00"}`. The English-only `ErrorMessage`
+     * fallback carries the same caveat as {@link isCancelled}.
      */
     public isRejected(): boolean {
-        if (this.hasTerminalOrderStatus() || this.isCancelled() || this.isExpired()) return false;
+        if (this._raw.OrderStatus === "6") return true;
+        if (this.hasKnownOrderStatus() || this.isCancelled() || this.isExpired()) return false;
         if (!this.hasErrorSignal()) return false;
         if (this._raw.actionCode === "2003" || this._raw.actionCode === "111") return true;
         const code = this._raw.params?.respCode;
@@ -124,14 +149,18 @@ export class ConfirmResponse {
 
     /** Catch-all: `true` iff every other predicate is `false`. */
     public isFailed(): boolean {
-        if (this.hasTerminalOrderStatus()) return false;
+        if (this.hasKnownOrderStatus()) return false;
         return !this.isExpired() && !this.isCancelled() && !this.isRejected();
     }
 
-    /** True if any of the five leaf OrderStatus predicates matches. Used by composites. */
-    private hasTerminalOrderStatus(): boolean {
+    /**
+     * True when the gateway supplied an OrderStatus this SDK recognises.
+     * The composites below only guess from `actionCode` when it did not.
+     */
+    private hasKnownOrderStatus(): boolean {
         return this.isSuccessful() || this.isRefunded() || this.isPending()
-            || this.isReversed() || this.isPreAuthorized();
+            || this.isReversed() || this.isPreAuthorized() || this.isPartiallyCaptured()
+            || this._raw.OrderStatus === "6";
     }
 
     /**

@@ -111,6 +111,9 @@ if (response.isSuccessful()) {
 | `refund(orderId, amount)`  | `/refund.do`          | `ConfirmResponse`  | Refund a captured payment.            |
 | `registerPreAuth()`        | `/registerPreAuth.do` | `RegisterResponse` | Hold funds without capturing.         |
 | `reverseOrder(orderId)`    | `/reverse.do`         | `ConfirmResponse`  | Void a transaction before settlement. |
+| `deposit(orderId, amount?)` | `/deposit.do`        | `ConfirmResponse`  | Capture a pre-authorized order (omit amount for the full order). |
+| `decline(orderId, orderNumber)` | `/decline.do`    | `ConfirmResponse`  | Cancel an order that was never paid. |
+| `statusExtended(orderId)`  | `/getOrderStatusExtended.do` | `ConfirmResponse` | Authoritative status; more detail than `status()`. |
 
 ### Configuration (Fluent Immutable API)
 
@@ -137,14 +140,16 @@ All predicates are **mutually exclusive** — at most one terminal-state predica
 
 | Method           | Condition                                                |
 | ---------------- | -------------------------------------------------------- |
-| `isSuccessful()` | Payment deposited (OrderStatus 2).                       |
-| `isPending()`    | Registered but not yet paid (OrderStatus 0).             |
-| `isReversed()`   | Authorization reversed/voided (OrderStatus 3).           |
-| `isFailed()`     | Terminal failure (not successful, refunded, or pending). |
-| `isRejected()`   | Declined by the issuing bank.                            |
+| `isSuccessful()` | Authorized and captured (OrderStatus 2).                 |
+| `isPending()`    | Still in flight — registered (0), 3-D Secure running (5), or pending payment (7). |
+| `isPreAuthorized()` | Funds held, awaiting `deposit()` (OrderStatus 1).     |
+| `isPartiallyCaptured()` | Part captured, more expected (OrderStatus 8).     |
+| `isReversed()`   | Authorization canceled (OrderStatus 3).                  |
 | `isRefunded()`   | Refunded (OrderStatus 4).                                |
+| `isRejected()`   | Declined (OrderStatus 6, or a decline `actionCode`).     |
 | `isCancelled()`  | Customer cancelled before completing.                    |
 | `isExpired()`    | Session timed out (actionCode -2007).                    |
+| `isFailed()`     | Catch-all: none of the above.                            |
 
 ### Response Accessors
 
@@ -262,6 +267,7 @@ For the full threat model, see [`SECURITY.md`](./SECURITY.md).
 - [`src/webhook/README.md`](./src/webhook/README.md) — zero-trust verification flow and distributed deployment notes.
 - [`examples/shop/README.md`](./examples/shop/README.md) — a storefront you can click through, no credentials needed.
 - [`mock/README.md`](./mock/README.md) — mock gateway, test cards, 3-D Secure, fault injection.
+- [`docs/ENDPOINTS.md`](./docs/ENDPOINTS.md) — which SATIM endpoints are actually deployed, probed against the test gateway.
 - [`SECURITY.md`](./SECURITY.md) — threat model, mitigations, known limitations.
 - **API reference** — generated locally with `npm run docs` (outputs to `docs/api/`).
 

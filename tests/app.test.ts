@@ -524,7 +524,7 @@ describe("Satim - status predicate mutual exclusivity", () => {
 
     test("cancelled is not rejected", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6", actionCode: "10" } as any);
+        const response = new ConfirmResponse({ actionCode: "10" } as any);
         expect(response.isCancelled()).toBe(true);
         expect(response.isRejected()).toBe(false);
     });
@@ -571,7 +571,6 @@ describe("Satim - case-insensitive ErrorMessage matching", () => {
     test("lowercase declined message is detected", async () => {
         const { ConfirmResponse } = await import("../src/responses");
         const response = new ConfirmResponse({
-            OrderStatus: "6",
             ErrorCode: "2",
             ErrorMessage: "payment is declined",
         } as any);
@@ -581,7 +580,6 @@ describe("Satim - case-insensitive ErrorMessage matching", () => {
     test("lowercase cancelled message is detected", async () => {
         const { ConfirmResponse } = await import("../src/responses");
         const response = new ConfirmResponse({
-            OrderStatus: "6",
             ErrorCode: "2",
             ErrorMessage: "PAYMENT IS CANCELLED",
         } as any);
@@ -592,13 +590,13 @@ describe("Satim - case-insensitive ErrorMessage matching", () => {
 describe("Satim - getErrorMessage specificity", () => {
     test("expired payment returns specific message", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6", actionCode: "-2007" } as any);
+        const response = new ConfirmResponse({ actionCode: "-2007" } as any);
         expect(response.getErrorMessage()).toBe("Payment session expired");
     });
 
     test("cancelled payment returns specific message", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6", actionCode: "10" } as any);
+        const response = new ConfirmResponse({ actionCode: "10" } as any);
         expect(response.getErrorMessage()).toBe("Payment was cancelled");
     });
 });
@@ -659,14 +657,14 @@ describe("Satim - mutual exclusivity of predicates", () => {
 
     test("expired + cancelled ErrorMessage: expired wins (not cancelled)", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6", actionCode: "-2007", ErrorMessage: "Payment is cancelled" } as any);
+        const response = new ConfirmResponse({ actionCode: "-2007", ErrorMessage: "Payment is cancelled" } as any);
         expect(response.isExpired()).toBe(true);
         expect(response.isCancelled()).toBe(false);
     });
 
     test("expired is not rejected", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6", actionCode: "-2007", params: { respCode: "05" } } as any);
+        const response = new ConfirmResponse({ actionCode: "-2007", params: { respCode: "05" } } as any);
         expect(response.isExpired()).toBe(true);
         expect(response.isRejected()).toBe(false);
     });
@@ -676,7 +674,6 @@ describe("Satim - empty respCode is not treated as rejection", () => {
     test("empty string respCode does not trigger rejection", async () => {
         const { ConfirmResponse } = await import("../src/responses");
         const response = new ConfirmResponse({
-            OrderStatus: "6",
             params: { respCode: "" },
         } as any);
         expect(response.isRejected()).toBe(false);
@@ -686,7 +683,7 @@ describe("Satim - empty respCode is not treated as rejection", () => {
 describe("Satim - undefined ErrorCode guard", () => {
     test("missing ErrorCode with no params/actionCode is not rejected", async () => {
         const { ConfirmResponse } = await import("../src/responses");
-        const response = new ConfirmResponse({ OrderStatus: "6" } as any);
+        const response = new ConfirmResponse({} as any);
         expect(response.isRejected()).toBe(false);
         expect(response.isCancelled()).toBe(false);
     });

@@ -49,14 +49,19 @@ export interface RegisterOrderResponse {
     [key: string]: unknown;
 }
 
-/** Response from confirm/getOrderStatus/refund/reverse. `OrderStatus`:
+/** Response from confirm/getOrderStatus/refund/reverse. `OrderStatus`,
+ * as documented by BPC (the platform SATIM runs):
  * | Value | Meaning |
  * |---|---|
  * | `"0"` | Registered, unpaid |
- * | `"1"` | Pre-authorized |
- * | `"2"` | Deposited (success) |
- * | `"3"` | Reversed |
+ * | `"1"` | Pre-authorized, not captured |
+ * | `"2"` | Authorized and captured (success) |
+ * | `"3"` | Authorization canceled (reversed) |
  * | `"4"` | Refunded |
+ * | `"5"` | Issuer's ACS started authentication (3-D Secure in flight) |
+ * | `"6"` | Authorization declined |
+ * | `"7"` | Pending payment |
+ * | `"8"` | Intermediate completion of a multi-part capture |
  * `Amount`/`depositAmount` are minor-unit integers; cardholder PII is
  * redacted by `getRawResponse()`. */
 export interface ConfirmOrderResponse {

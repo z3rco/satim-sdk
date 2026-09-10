@@ -9,7 +9,11 @@ import { expect, test, describe, vi } from "vitest";
 import { Satim } from "../src/Satim";
 import { HttpClientService } from "../src/client";
 import { CircuitBreaker } from "../src/circuit-breaker";
-import { SatimError, SatimUnexpectedResponseError } from "../src/exceptions";
+import {
+    SatimError, SatimUnexpectedResponseError, SatimInvalidCredentialsError,
+    SatimInvalidArgumentError,
+} from "../src/exceptions";
+import { ConfirmResponse } from "../src/responses/confirm";
 
 const CREDS = { username: "u", password: "p", terminalId: "t" };
 
@@ -454,5 +458,141 @@ describe("allowPrivateUrls", () => {
         for (const url of ["http://2130706433/x", "http://0x7f000001/x", "http://0177.0.0.1/x"]) {
             expect(() => satim().returnUrl(url)).toThrow();
         }
+    });
+});
+
+// ─── BPC order statuses 5-8 ──────────────────────────────────────────
+
+describe("every documented BPC order status maps to exactly one predicate", () => {
+    const PREDICATES = [
+        "isSuccessful", "isPending", "isPreAuthorized", "isReversed", "isRefunded",
+        "isPartiallyCaptured", "isExpired", "isCancelled", "isRejected", "isFailed",
+    ] as const;
+
+    const fires = (status: string) => {
+        const r = new ConfirmResponse({ OrderStatus: status, Amount: 5000 } as any);
+        return PREDICATES.filter((p) => (r as any)[p]());
+    };
+
+    test.each([
+        ["0", "isPending"], ["1", "isPreAuthorized"], ["2", "isSuccessful"],
+        ["3", "isReversed"], ["4", "isRefunded"], ["5", "isPending"],
+        ["6", "isRejected"], ["7", "isPending"], ["8", "isPartiallyCaptured"],
+    ])("status %s -> %s, and nothing else", (status, expected) => {
+        expect(fires(status)).toEqual([expected]);
+    });
+
+    test("in-flight states are never reported as failed", () => {
+        // 5 is 3-D Secure in progress, 7 is pending payment, 8 is a partial
+        // capture. Reporting any of them as failed invites a merchant to
+        // cancel or re-charge an order that is still moving.
+        for (const status of ["5", "7", "8"]) {
+            const r = new ConfirmResponse({ OrderStatus: status } as any);
+            expect(r.isFailed()).toBe(false);
+        }
+    });
+
+    test("a declined order is rejected rather than merely failed", () => {
+        const r = new ConfirmResponse({ OrderStatus: "6" } as any);
+        expect(r.isRejected()).toBe(true);
+        expect(r.isFailed()).toBe(false);
+    });
+
+    test("an unrecognised status still falls back to the actionCode chain", () => {
+        const r = new ConfirmResponse({ OrderStatus: "99", actionCode: "10" } as any);
+        expect(r.isCancelled()).toBe(true);
+    });
+});
+
+// ─── Credential failures are typed the same way everywhere ───────────
+
+describe("bad credentials raise the same error whichever endpoint answers", () => {
+    test("HTTP 401 with a bare string body maps to SatimInvalidCredentialsError", async () => {
+        // acknowledgeTransaction.do answers 401 with `"Access denied"` while
+        // register.do answers 200 with errorCode 5. Same failure, so the same
+        // typed error — otherwise what a caller catches depends on the method.
+        const client = new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest",
+            fetch: (async () => new Response('"Access denied"', { status: 401 })) as any,
+        });
+        await expect(client.handleApiRequest("/public/acknowledgeTransaction.do", {}))
+            .rejects.toBeInstanceOf(SatimInvalidCredentialsError);
+    });
+
+    test("403 maps the same way, other 4xx do not", async () => {
+        const make = (status: number) => new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest",
+            fetch: (async () => new Response("nope", { status })) as any,
+        });
+        await expect(make(403).handleApiRequest("/refund.do", {}))
+            .rejects.toBeInstanceOf(SatimInvalidCredentialsError);
+        await expect(make(404).handleApiRequest("/refund.do", {}))
+            .rejects.toThrow(/HTTP Error: 404/);
+    });
+
+    test("a credential failure does not open the circuit breaker", async () => {
+        const client = new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest",
+            circuitBreaker: { failureThreshold: 2, resetTimeoutMs: 10_000 },
+            fetch: (async () => new Response('"Access denied"', { status: 401 })) as any,
+        });
+        for (let i = 0; i < 4; i++) {
+            await expect(client.handleApiRequest("/refund.do", {}))
+                .rejects.toBeInstanceOf(SatimInvalidCredentialsError);
+        }
+    });
+});
+
+// ─── Endpoints the SDK was missing ───────────────────────────────────
+
+describe("deposit / decline / statusExtended", () => {
+    function recorder(response: any = { OrderStatus: "2", Amount: 500000 }) {
+        const calls: any[] = [];
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: (endpoint: string, data: any, opts: any) => {
+                calls.push({ endpoint, data, opts });
+                return Promise.resolve(response);
+            },
+        };
+        return { satim, calls };
+    }
+
+    test("deposit captures a pre-auth via /deposit.do and is not retried", async () => {
+        const { satim, calls } = recorder();
+        await satim.deposit("order-1", 5000);
+        expect(calls[0].endpoint).toBe("/deposit.do");
+        expect(calls[0].data.amount).toBe(500000);   // minor units
+        expect(calls[0].opts).toEqual({ retryable: false });
+    });
+
+    test("deposit without an amount sends 0, which BPC reads as the full order", async () => {
+        const { satim, calls } = recorder();
+        await satim.deposit("order-1");
+        expect(calls[0].data.amount).toBe(0);
+    });
+
+    test("deposit validates its inputs", async () => {
+        const { satim } = recorder();
+        await expect(satim.deposit("bad id!")).rejects.toThrow(SatimInvalidArgumentError);
+        await expect(satim.deposit("order-1", -5)).rejects.toThrow(SatimInvalidArgumentError);
+        await expect(satim.deposit("order-1", 1.234)).rejects.toThrow(SatimInvalidArgumentError);
+    });
+
+    test("decline cancels an unpaid order and sends both identifiers", async () => {
+        const { satim, calls } = recorder({ OrderStatus: "6" });
+        await satim.decline("order-1", "CART1001");
+        expect(calls[0].endpoint).toBe("/decline.do");
+        expect(calls[0].data.orderId).toBe("order-1");
+        expect(calls[0].data.orderNumber).toBe("CART1001");
+        expect(calls[0].opts).toEqual({ retryable: false });
+    });
+
+    test("statusExtended reads the authoritative status and is retryable", async () => {
+        const { satim, calls } = recorder();
+        const r = await satim.statusExtended("order-1");
+        expect(calls[0].endpoint).toBe("/getOrderStatusExtended.do");
+        expect(calls[0].opts).toBeUndefined();   // defaults to retryable
+        expect(r.isSuccessful()).toBe(true);
     });
 });

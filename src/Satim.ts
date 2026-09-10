@@ -19,7 +19,7 @@ import type { SatimCredentials, RegisterOrderResponse, ConfirmOrderResponse } fr
 import { RegisterResponse } from "./responses/register.js";
 import { ConfirmResponse } from "./responses/confirm.js";
 import { toMinorUnits } from "./money.js";
-import { assertOrderId, assertConfirmAmount, assertRefundAmount } from "./validation.js";
+import { assertOrderId, assertConfirmAmount, assertRefundAmount, assertOrderNumber } from "./validation.js";
 import { deriveIdempotencyKey, deriveOrderNumber } from "./idempotency.js";
 import { randomOrderNumber } from "./crypto.js";
 import { WebhookHandler, type WebhookHandlerOptions } from "./webhook/handler.js";
@@ -221,6 +221,86 @@ export class Satim extends SatimConfig {
             "/reverse.do",
             { userName: this.username, password: this.password, orderId, language: this._language },
             { retryable: false },
+        );
+        return new ConfirmResponse(result);
+    }
+
+    /**
+     * Capture a pre-authorized order via `/deposit.do`.
+     *
+     * This is the second phase of a two-phase payment and the only way to
+     * take money that {@link registerPreAuth} put on hold.
+     *
+     * @param amount Major units to capture. Omit to capture the full order
+     *        (sent as `amount=0`, which BPC defines as the whole amount).
+     *        A smaller value performs a partial capture, and the gateway
+     *        may allow further captures afterwards.
+     *
+     * Retry: disabled. A repeated capture would take the money twice.
+     *
+     * @throws {@link SatimInvalidArgumentError} on a malformed `orderId`
+     *         or a non-positive / over-precise `amount`.
+     */
+    public async deposit(orderId: string, amount?: number): Promise<ConfirmResponse> {
+        assertOrderId(orderId, "deposit");
+        if (amount !== undefined) assertRefundAmount(amount);
+        const result = await this.httpClientService.handleApiRequest<ConfirmOrderResponse>(
+            "/deposit.do",
+            {
+                userName: this.username, password: this.password, orderId,
+                amount: amount === undefined ? 0 : toMinorUnits(amount),
+                currency: this._currency, language: this._language,
+            },
+            { retryable: false },
+        );
+        return new ConfirmResponse(result);
+    }
+
+    /**
+     * Cancel an order that has not been paid, via `/decline.do`.
+     *
+     * Only works while the order is incomplete; the gateway moves it to
+     * `DECLINED`. Use this to release an abandoned checkout rather than
+     * leaving it to expire.
+     *
+     * Both identifiers are required — the gateway's `orderId` and your own
+     * `orderNumber` — because `decline.do` marks both mandatory.
+     *
+     * Retry: disabled.
+     *
+     * @throws {@link SatimInvalidArgumentError} on malformed identifiers.
+     */
+    public async decline(orderId: string, orderNumber: string): Promise<ConfirmResponse> {
+        assertOrderId(orderId, "decline");
+        const number = assertOrderNumber(orderNumber);
+        const result = await this.httpClientService.handleApiRequest<ConfirmOrderResponse>(
+            "/decline.do",
+            {
+                userName: this.username, password: this.password,
+                orderId, orderNumber: number, language: this._language,
+            },
+            { retryable: false },
+        );
+        return new ConfirmResponse(result);
+    }
+
+    /**
+     * Query order status via `/getOrderStatusExtended.do`.
+     *
+     * BPC treats this, not `/getOrderStatus.do`, as the authoritative way
+     * to find out whether a payment succeeded: a request can be processed
+     * successfully and still describe a failed payment. It also returns
+     * more detail than {@link status}.
+     *
+     * Idempotent, so retried and de-duplicated like {@link status}.
+     *
+     * @throws {@link SatimInvalidArgumentError} on a malformed `orderId`.
+     */
+    public async statusExtended(orderId: string): Promise<ConfirmResponse> {
+        assertOrderId(orderId, "extended status check");
+        const result = await this.httpClientService.handleApiRequest<ConfirmOrderResponse>(
+            "/getOrderStatusExtended.do",
+            { userName: this.username, password: this.password, orderId, language: this._language },
         );
         return new ConfirmResponse(result);
     }

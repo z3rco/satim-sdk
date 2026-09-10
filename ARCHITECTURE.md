@@ -106,6 +106,9 @@ The single-probe rule needs the accounting invariant below to hold, and needs a 
 | `/getOrderStatus.do` (`status`) | `true` | Idempotent read. |
 | `/refund.do` | `false` | Mutation without idempotency primitive. |
 | `/reverse.do` | `false` | Mutation without idempotency primitive. |
+| `/deposit.do` (`deposit`) | `false` | A repeated capture would take the money twice. |
+| `/decline.do` (`decline`) | `false` | Mutation without idempotency primitive. |
+| `/getOrderStatusExtended.do` (`statusExtended`) | `true` | Idempotent read. |
 
 Backoff is exponential with 0–50% jitter: `BASE_RETRY_DELAY_MS × 2^attempt + uniform(0, 0.5 × base)`. Defaults: `BASE = 500ms`, `maxRetries = 2`. Maximum total backoff at defaults: ~2.25 seconds.
 
@@ -135,19 +138,28 @@ This model is strictly stronger than HMAC verification. A valid signature proves
 
 ### Order status state machine
 
-`OrderStatus` values are defined by the SATIM/BPC spec. Lifecycle:
+`OrderStatus` values, as documented by BPC (the platform SATIM runs). All
+nine map to exactly one predicate on `ConfirmResponse`:
 
-```
-register()                              ┌─ confirm() ──→ 2 (deposited) ──→ refund() ──→ 4 (refunded)
-       │                                │
-       └─→ 0 (registered, not paid) ────┤
-                                        │
-                                        └─ partial capture (preauth) ──→ 1 (preauth) ──→ reverse() ──→ 3 (reversed)
-                                                                            │
-                                                                            └── capture ──→ 2
-```
+| Value | Meaning | Predicate |
+|-------|---------|-----------|
+| `0` | Registered, not paid | `isPending()` |
+| `1` | Pre-authorized, not captured | `isPreAuthorized()` |
+| `2` | Authorized and captured | `isSuccessful()` |
+| `3` | Authorization canceled | `isReversed()` |
+| `4` | Refunded | `isRefunded()` |
+| `5` | Issuer's ACS started 3-D Secure | `isPending()` |
+| `6` | Authorization declined | `isRejected()` |
+| `7` | Pending payment | `isPending()` |
+| `8` | Intermediate multi-part capture | `isPartiallyCaptured()` |
 
-The simulator (when present) and the real gateway emit `OrderStatus` values within `{0,1,2,3,4}` or omit the field entirely for terminal failures (decline, cancel, expire) that never produced a status transition.
+`5`, `7` and `8` are in-flight states. Reporting any of them as failed —
+which the SDK did before these values were handled — invites a merchant to
+cancel or re-charge an order that is still moving.
+
+Capture is `/deposit.do`, not `confirm()`. `confirm()` acknowledges a
+transaction through SATIM's own `/public/acknowledgeTransaction.do`, which
+is not part of BPC's documented API.
 
 ### Predicate mutual-exclusivity contract
 

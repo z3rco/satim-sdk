@@ -224,31 +224,58 @@ async function main() {
         }
     }
 
-    step(10, "Pre-authorization: hold, then capture");
+    step(10, "Pre-authorization: hold, then capture with deposit()");
     {
         const reg = await satim.amount(7500).returnUrl(`${MERCHANT}/return`).safeRegisterPreAuth("CART-2010");
         ledger.set(reg.getOrderId(), 7500);
         await pay(reg.getUrl(), CARD.preAuth);
         const held = await satim.status(reg.getOrderId());
-        console.log(`   after payment: preAuthorized=${ok(held.isPreAuthorized())}`);
-        const captured = await satim.confirm(reg.getOrderId(), 7500);
-        console.log(`   after confirm: successful=${ok(captured.isSuccessful())}`
+        console.log(`   hold placed:    preAuthorized=${ok(held.isPreAuthorized())}`);
+
+        // deposit.do is the capture, not confirm.do — confirm acknowledges.
+        const captured = await satim.deposit(reg.getOrderId());
+        console.log(`   after deposit(): successful=${ok(captured.isSuccessful())}`
             + ` deposited=${captured.getDepositAmount()} DZD`);
     }
 
-    step(11, "Refund and reverse");
+    step(11, "Partial capture leaves the order mid-flight, not failed");
     {
-        const a = await register("CART-2011", 6000);
+        const reg = await satim.amount(9000).returnUrl(`${MERCHANT}/return`).safeRegisterPreAuth("CART-2011");
+        ledger.set(reg.getOrderId(), 9000);
+        await pay(reg.getUrl(), CARD.preAuth);
+        const part = await satim.deposit(reg.getOrderId(), 4000);
+        console.log(`   captured 4000 of 9000 -> partiallyCaptured=${ok(part.isPartiallyCaptured())}`
+            + ` failed=${part.isFailed() ? bad("true") : ok("false")}`
+            + ` deposited=${part.getDepositAmount()} DZD`);
+        const rest = await satim.deposit(reg.getOrderId(), 5000);
+        console.log(`   captured the rest -> successful=${ok(rest.isSuccessful())}`
+            + ` deposited=${rest.getDepositAmount()} DZD`);
+    }
+
+    step(12, "Cancelling an unpaid order with decline()");
+    {
+        const reg = await satim.amount(3300).returnUrl(`${MERCHANT}/return`).safeRegister("CART-2012");
+        ledger.set(reg.getOrderId(), 3300);
+        const before = await satim.statusExtended(reg.getOrderId());
+        console.log(`   before: pending=${ok(before.isPending())}`);
+        const declined = await satim.decline(reg.getOrderId(), "CART2012");
+        console.log(`   after decline(): rejected=${ok(declined.isRejected())}`
+            + ` failed=${declined.isFailed() ? bad("true") : ok("false")}`);
+    }
+
+    step(13, "Refund and reverse");
+    {
+        const a = await register("CART-2013", 6000);
         await pay(a.getUrl(), CARD.approved);
         await satim.confirm(a.getOrderId(), 6000);
         console.log(`   refund  -> refunded=${ok((await satim.refund(a.getOrderId(), 6000)).isRefunded())}`);
 
-        const b = await register("CART-2012", 6000);
+        const b = await register("CART-2014", 6000);
         await pay(b.getUrl(), CARD.approved);
         console.log(`   reverse -> reversed=${ok((await satim.reverseOrder(b.getOrderId())).isReversed())}`);
     }
 
-    step(12, "Transport faults: retry, breaker, recovery");
+    step(14, "Transport faults: retry, breaker, recovery");
     {
         await fetch(`${GATEWAY}/__control`, { method: "POST", body: JSON.stringify({ faults: ["http503", "http503"] }) });
         const probe = [...ledger.keys()][0];
@@ -275,7 +302,7 @@ async function main() {
             + `${await fragile.status(probe).then(() => ok("probe admitted"), () => bad("still refused"))}`);
     }
 
-    step(13, "Bad credentials");
+    step(15, "Bad credentials");
     {
         const wrong = new Satim(
             { username: "nope", password: "nope", terminalId: "T1" },
