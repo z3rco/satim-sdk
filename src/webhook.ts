@@ -7,7 +7,7 @@
  * {@link ./webhook/rate-limiter} and {@link ./webhook/extract}.
  *
  * No logic lives in this file. New code should import from the package
- * root: `import { WebhookHandler } from "satim-module"`.
+ * root: `import { WebhookHandler } from "satim-sdk"`.
  * @file
  */
 
@@ -15,4 +15,6 @@ export {
     WebhookHandler,
     type WebhookHandlerOptions,
     type WebhookResult,
-} from "./webhook/handler";
+    type WebhookOutcome,
+    type WebhookRejectionReason,
+} from "./webhook/handler.js";

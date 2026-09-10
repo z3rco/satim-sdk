@@ -25,16 +25,44 @@
  *   check-then-mark race within a single process.
  * - **Duplicate detection** — pluggable persistence callbacks for
  *   multi-instance deployments.
- * - **Pending-aware marking** — pending orders are NOT marked processed,
- *   so subsequent callbacks can re-check as the state advances.
+ * - **Terminal-state marking** — only definitively finished orders
+ *   (deposited, refunded, reversed) are marked processed, so callbacks
+ *   for orders still in motion — pending, pre-authorized, declined —
+ *   keep re-checking as the state advances.
  * @file
  */
 
-import type { Satim } from "../Satim";
-import type { ConfirmResponse } from "../responses/confirm";
-import { SatimInvalidArgumentError, SatimMissingDataError } from "../exceptions";
-import { SlidingWindowRateLimiter } from "./rate-limiter";
-import { extractOrderId } from "./extract";
+import type { Satim } from "../Satim.js";
+import type { ConfirmResponse } from "../responses/confirm.js";
+import { SatimInvalidArgumentError, SatimMissingDataError } from "../exceptions.js";
+import { SlidingWindowRateLimiter } from "./rate-limiter.js";
+import { extractOrderId } from "./extract.js";
+
+/**
+ * Why a callback did not produce a verified result.
+ *
+ * - `invalid_source` — no syntactically valid orderId could be extracted.
+ *   Respond `400`; redelivery will not help.
+ * - `rate_limited` — the sliding window was full. Respond `429` (or any
+ *   5xx) so the gateway redelivers; responding `200` silently drops a
+ *   real payment notification.
+ * - `unknown_order` — `onResolveAmount` returned `undefined`/`null`, so
+ *   the order is not one this merchant issued. Respond `404`.
+ */
+export type WebhookRejectionReason = "invalid_source" | "rate_limited" | "unknown_order";
+
+/**
+ * Outcome of {@link WebhookHandler.inspect}: either a verified result or
+ * the specific reason verification did not happen.
+ *
+ * `verify()` collapses this to `WebhookResult | null`, which cannot
+ * distinguish "this callback is junk, drop it" from "I was too busy,
+ * please resend". Prefer `inspect()` in any handler that returns an HTTP
+ * status to the gateway.
+ */
+export type WebhookOutcome =
+    | { verified: true; result: WebhookResult }
+    | { verified: false; reason: WebhookRejectionReason };
 
 /** Server-verified result of a webhook/callback invocation. */
 export interface WebhookResult {
@@ -80,13 +108,24 @@ export interface WebhookHandlerOptions {
     /**
      * Mark `orderId` as processed.
      *
-     * Called after `confirm()` returns a non-pending response. Pending
-     * orders are deliberately not marked so subsequent callbacks can
-     * re-check as the order advances to a terminal state.
+     * Called only once the gateway reports a **terminal** `OrderStatus`:
+     * deposited (`"2"`), refunded (`"4"`), or reversed (`"3"`). Every
+     * other state — pending, pre-authorized, declined, cancelled, expired
+     * — leaves the order unmarked so a later callback can re-verify as it
+     * advances. See {@link WebhookHandler.isTerminal} for why this is not
+     * simply "not pending".
      */
     onMarkProcessed?: (orderId: string) => Promise<void> | void;
 
-    /** Max admitted callbacks per sliding window. Default 100. */
+    /**
+     * Max admitted callbacks per sliding window. Default 100.
+     *
+     * The limit is per handler instance and counts *all* orders, so size
+     * it against peak checkout throughput, not against a single customer.
+     * Callbacks over the limit are rejected with `rate_limited`; a handler
+     * that answers those with `200` will silently lose payment
+     * notifications, so surface them as `429`/5xx via {@link WebhookHandler.inspect}.
+     */
     maxCallbacksPerWindow?: number;
     /** Sliding window duration in ms. Default 60 000. */
     rateLimitWindowMs?: number;
@@ -152,7 +191,7 @@ export class WebhookHandler {
         const usingFallback = !options.onCheckDuplicate && !options.onMarkProcessed;
         if (usingFallback && !options.suppressMultiInstanceWarning) {
             console.warn(
-                "[satim-module] WebhookHandler: using in-memory duplicate tracking. " +
+                "[satim-sdk] WebhookHandler: using in-memory duplicate tracking. " +
                 "This is only safe for single-process deployments. " +
                 "In multi-instance environments (Kubernetes, multiple dynos, serverless) " +
                 "provide onCheckDuplicate and onMarkProcessed backed by a shared store " +
@@ -185,13 +224,15 @@ export class WebhookHandler {
      * 3. Acquire per-orderId in-flight lock.
      * 4. Run `onCheckDuplicate(orderId)`.
      * 5. Run `onResolveAmount(orderId)`. Unknown order → `null` (no gateway call).
-     * 6. `satim.confirm(orderId, expectedAmount)` — `verifyAmount` runs automatically on success.
-     * 7. `onMarkProcessed(orderId)` if the response is not pending.
+     * 6. `satim.confirm(orderId, expectedAmount)` — or `satim.status()` when
+     *    already processed. The amount is verified either way.
+     * 7. `onMarkProcessed(orderId)` if the order reached a terminal state.
      * 8. Release lock in `finally`.
      *
      * Postcondition: returns a `WebhookResult` on success (including
      * duplicate detection), or `null` when input is invalid, rate
-     * limited, or the order is unknown.
+     * limited, or the order is unknown. Use {@link inspect} instead when
+     * those three cases need different HTTP responses — they do.
      *
      * Complexity: dominated by the gateway round trip in step 6
      * (`O(network)`). All other steps are `O(1)` or `O(log n)` (rate
@@ -203,23 +244,48 @@ export class WebhookHandler {
      *         respond with HTTP 500 on unexpected throws.
      */
     async verify(source: unknown): Promise<WebhookResult | null> {
+        const outcome = await this.inspect(source);
+        return outcome.verified ? outcome.result : null;
+    }
+
+    /**
+     * Same verification flow as {@link verify}, but reports *why* a
+     * callback was not verified instead of collapsing every rejection to
+     * `null`.
+     *
+     * Use this wherever the handler decides an HTTP status. The three
+     * rejection reasons need three different answers to the gateway —
+     * `400` for junk, `429` for rate limiting (so it redelivers), `404`
+     * for an order this merchant never issued — and `verify()` cannot
+     * tell them apart, so the usual `if (!result) return 200` shape drops
+     * real payment notifications on the floor during a traffic spike.
+     *
+     * @throws Anything `satim.confirm()` / `satim.status()` can throw.
+     */
+    async inspect(source: unknown): Promise<WebhookOutcome> {
         const orderId = extractOrderId(source);
-        if (!orderId) return null;
-        if (!this.rateLimiter.check()) return null;
+        if (!orderId) return { verified: false, reason: "invalid_source" };
+        if (!this.rateLimiter.check()) return { verified: false, reason: "rate_limited" };
 
         const existing = this.inflightLocks.get(orderId);
         if (existing) {
             const first = await existing;
-            return first ? { orderId, response: first.response, duplicate: true } : null;
+            return first
+                ? { verified: true, result: { orderId, response: first.response, duplicate: true } }
+                : { verified: false, reason: "unknown_order" };
         }
 
         const execution = this.executeVerify(orderId);
         this.inflightLocks.set(orderId, execution);
+        let result: WebhookResult | null;
         try {
-            return await execution;
+            result = await execution;
         } finally {
             this.inflightLocks.delete(orderId);
         }
+        return result
+            ? { verified: true, result }
+            : { verified: false, reason: "unknown_order" };
     }
 
     /**
@@ -238,8 +304,43 @@ export class WebhookHandler {
 
         if (expectedAmount === undefined || expectedAmount === null) return null;
 
-        const response = await this.satim.confirm(orderId, expectedAmount);
-        if (!isDuplicate && !response.isPending()) await this.onMarkProcessed(orderId);
+        // An already-processed order is re-read with status() rather than
+        // re-acknowledged with confirm(): both return authoritative live
+        // state, but /public/acknowledgeTransaction.do is a mutating
+        // acknowledgement, and replayed callbacks should not re-fire it.
+        // status() is also idempotent, so it retries and de-duplicates.
+        const response = isDuplicate
+            ? await this.satim.status(orderId)
+            : await this.satim.confirm(orderId, expectedAmount);
+
+        // confirm() verifies the amount itself; status() does not, so the
+        // replay path re-asserts it rather than trusting the earlier check.
+        if (isDuplicate && response.isSuccessful()) response.verifyAmount(expectedAmount);
+
+        if (!isDuplicate && WebhookHandler.isTerminal(response)) await this.onMarkProcessed(orderId);
         return { orderId, response, duplicate: isDuplicate };
+    }
+
+    /**
+     * True only for order states that can never advance again.
+     *
+     * Marking an order processed is irreversible from the handler's point
+     * of view: every later callback for it comes back `duplicate: true`,
+     * which callers are told not to fulfil. So the test has to be
+     * "definitely finished", not "not pending" — two states break under
+     * the looser test:
+     *
+     * - **Pre-authorized** (`OrderStatus` `"1"`) is a fund hold awaiting
+     *   capture. Marking it means the later capture callback (`"2"`)
+     *   arrives as a duplicate and the order is never fulfilled.
+     * - **Declined / cancelled / expired** responses carry no
+     *   `OrderStatus` at all. A customer who retries their card on the
+     *   same order and succeeds produces a `"2"` callback that would
+     *   likewise arrive as a duplicate — charged, unfulfilled.
+     *
+     * Leaving those unmarked costs at most a repeated `status()` read.
+     */
+    private static isTerminal(response: ConfirmResponse): boolean {
+        return response.isSuccessful() || response.isRefunded() || response.isReversed();
     }
 }

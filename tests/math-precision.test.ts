@@ -153,7 +153,7 @@ describe("getAmount — minor-to-major round trip", () => {
         }
     });
 
-    test("rejects non-satim-module, negative, zero, and fractional amounts", () => {
+    test("rejects non-numeric, negative, zero, and fractional amounts", () => {
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "INVALID" } as any).getAmount()).toBeUndefined();
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "-100" } as any).getAmount()).toBeUndefined();
         expect(new ConfirmResponse({ OrderStatus: "2", Amount: "0" } as any).getAmount()).toBeUndefined();
@@ -181,10 +181,20 @@ describe("verifyAmount — strict comparison", () => {
     });
 
     test("rejects hex, scientific, and non-decimal gateway strings", () => {
-        const badStrings = ["0x7CF", "1e3", "1E3", "+1999", "-1999", "NaN", "Infinity", "1999.0"];
+        const badStrings = ["0x7CF", "1e3", "1E3", "+1999", "-1999", "NaN", "Infinity", "1999.5", "1999.01"];
         for (const str of badStrings) {
             const response = new ConfirmResponse({ OrderStatus: "2", Amount: str } as any);
             expect(() => response.verifyAmount(19.99)).toThrow();
+        }
+    });
+
+    test("accepts integral minor units serialised with trailing zeros", () => {
+        // Gateways routinely push integers through a decimal formatter.
+        // Rejecting these threw on perfectly good successful payments.
+        for (const str of ["1999.0", "1999.00", "1999.000"]) {
+            const response = new ConfirmResponse({ OrderStatus: "2", Amount: str } as any);
+            expect(() => response.verifyAmount(19.99)).not.toThrow();
+            expect(response.getAmount()).toBe(19.99);
         }
     });
 

@@ -1,6 +1,6 @@
 /**
- * `ConfirmResponse`: typed wrapper for `/confirmOrder`, `/getOrderStatus`,
- * `/refund`, and `/reverse` results.
+ * `ConfirmResponse`: typed wrapper for `/public/acknowledgeTransaction.do`
+ * (confirm), `/getOrderStatus.do`, `/refund.do`, and `/reverse.do` results.
  *
  * # Status predicate contract
  *
@@ -36,10 +36,22 @@
  * @file
  */
 
-import { SatimUnexpectedResponseError } from "../exceptions";
-import type { ConfirmOrderResponse } from "../types";
-import { toMinorUnits, isWholeMinorUnits } from "../money";
-import { validateConfirmSchema } from "./schema";
+import { SatimUnexpectedResponseError } from "../exceptions.js";
+import type { ConfirmOrderResponse } from "../types.js";
+import { toMinorUnits, isWholeMinorUnits } from "../money.js";
+import { validateConfirmSchema } from "./schema.js";
+
+/**
+ * Accepted shape for a gateway minor-unit amount.
+ *
+ * Minor units are integral by definition, so the digits are required.
+ * A trailing `.0`/`.00` is tolerated because gateways routinely serialise
+ * integers through a decimal formatter — rejecting `"5000.00"` would
+ * throw on a perfectly good successful payment and leave it unfulfilled.
+ * Any other fraction (`"5000.5"`) is still rejected: a real sub-centime
+ * amount means the response is malformed and must not be silently rounded.
+ */
+const MINOR_UNIT_PATTERN = /^\d+(?:\.0+)?$/;
 
 /**
  * Immutable wrapper around an order-management response.
@@ -82,7 +94,7 @@ export class ConfirmResponse {
 
     /**
      * Captured amount in major units (e.g. DA). Returns `undefined` when the
-     * gateway value is absent, non-satim-module, fractional, or exceeds
+     * gateway value is absent, non-numeric, fractional, or exceeds
      * `Number.MAX_SAFE_INTEGER` — these cases indicate a malformed response
      * that should not be silently coerced. Callers needing strictness should
      * also call {@link verifyAmount}.
@@ -231,7 +243,7 @@ export class ConfirmResponse {
      * bypasses the gateway call entirely.
      *
      * @throws {@link SatimUnexpectedResponseError} when the gateway amount
-     *         is absent, non-satim-module, fractional, or mismatches.
+     *         is absent, non-numeric, fractional, or mismatches.
      */
     public verifyAmount(expectedAmount: number): void {
         const rawAmount = this._raw.Amount ?? this._raw.amount;
@@ -239,7 +251,7 @@ export class ConfirmResponse {
             throw new SatimUnexpectedResponseError("missing amount in payment response.", "gateway");
         }
         const str = String(rawAmount).trim();
-        if (!/^\d+$/.test(str)) {
+        if (!MINOR_UNIT_PATTERN.test(str)) {
             throw new SatimUnexpectedResponseError("non-integer or non-positive amount in payment response.", "gateway");
         }
         const actualMinor = Number(str);
@@ -276,12 +288,12 @@ export class ConfirmResponse {
 
 /**
  * Parse a gateway minor-unit field into a major-unit number, or `undefined`
- * for absent / non-satim-module / fractional / oversize input.
+ * for absent / non-numeric / fractional / oversize input.
  */
 function parseMinorField(raw: number | string | undefined): number | undefined {
     if (raw === undefined) return undefined;
     const str = String(raw).trim();
-    if (!/^\d+$/.test(str)) return undefined;
+    if (!MINOR_UNIT_PATTERN.test(str)) return undefined;
     const parsed = Number(str);
     if (!isWholeMinorUnits(parsed) || parsed > Number.MAX_SAFE_INTEGER) return undefined;
     return parseFloat((parsed / 100).toFixed(2));
