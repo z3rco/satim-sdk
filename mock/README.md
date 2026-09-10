@@ -57,6 +57,7 @@ failed**, an order left **pending** because the issuer never answered, a
 | `6280581000000049` | challenge | declines — restricted card (`62`) |
 | `6280581000000056` | challenge | approves as a **pre-authorization** (hold) |
 | `6280581000000064` | challenge | never answers — order stays **pending** (`91`) |
+| `6280581000000072` | challenge | **checks a real 10 000,00 DA balance** — debits it, declines when short |
 | `5078001000000004` | frictionless, no challenge | approves (Edahabia) |
 
 Any future expiry, any 3-4 digit CVV, any cardholder name. The 3-D Secure
@@ -64,6 +65,21 @@ OTP is `123456`; anything else is refused, three attempts per card.
 
 Every PAN is Luhn-valid, so the form accepts it exactly as it would accept
 a real card — what differs is what the *issuer* then does.
+
+## The funded card
+
+`6280581000000072` carries an actual account balance of 10 000,00 DA. The
+issuer checks it against the order amount, debits it on approval, and
+declines with *provision insuffisante* when the account is short. Refunds
+and reversals credit it back.
+
+So a decline from this card is **earned rather than scripted**: buy 4 800 DA
+of olive oil and 4 500 DA of honey and the third purchase fails because
+850 DA is more than the 700 DA left, not because a fixture said so. Draining
+an account across several orders is a state no scripted card can reach.
+
+`GET /__balances` shows what is left; `POST /__reset` restores it. The
+payment page lists the live balance beside the card.
 
 ## Reaching the other states
 

@@ -47,6 +47,18 @@ const CREDENTIALS = {
 
 const orders = new Map();
 const byRequestId = new Map();
+/**
+ * Live account balances in minor units, seeded from the card table.
+ *
+ * Kept outside the order map on purpose: a funded card is drained across
+ * orders, so a second purchase can be declined because the first one spent
+ * the money. Restarting the gateway restores the starting balances.
+ */
+const balances = new Map(
+    Object.entries(TEST_CARDS)
+        .filter(([, card]) => typeof card.balanceMinor === "number")
+        .map(([pan, card]) => [pan, card.balanceMinor]),
+);
 const byOrderNumber = new Map();
 let armedFaults = [];
 
@@ -225,7 +237,12 @@ function handleRefund(form, res) {
         return sendJson(res, { ErrorCode: wire(7), ErrorMessage: "Order is not in a refundable state" });
     }
     order.orderStatus = "4";
-    order.depositAmountMinor = Math.max(0, order.depositAmountMinor - Number(form.amount ?? 0));
+    const refunded = Number(form.amount ?? 0);
+    order.depositAmountMinor = Math.max(0, order.depositAmountMinor - refunded);
+    if (order.card && balances.has(order.card.pan)) {
+        balances.set(order.card.pan, (balances.get(order.card.pan) ?? 0) + refunded);
+        log(`refund: credited ${refunded} back to ${order.card.pan}`);
+    }
     log(`refund: ${order.orderId}`);
     return sendJson(res, orderPayload(order));
 }
@@ -235,6 +252,10 @@ function handleReverse(form, res) {
     if (!order) return sendJson(res, capitalised(UNKNOWN_ORDER));
     order.orderStatus = "3";
     order.depositAmountMinor = 0;
+    if (order.card && balances.has(order.card.pan)) {
+        balances.set(order.card.pan, (balances.get(order.card.pan) ?? 0) + order.amountMinor);
+        log(`reverse: released ${order.amountMinor} back to ${order.card.pan}`);
+    }
     log(`reverse: ${order.orderId}`);
     return sendJson(res, orderPayload(order));
 }
@@ -291,8 +312,13 @@ const SHELL = (title, body) => `<!doctype html><html><head><meta charset="utf-8"
 
 function paymentPage(order, error) {
     const L = t(order);
-    const cards = Object.entries(TEST_CARDS)
-        .map(([pan, c]) => `<tr><td><code>${pan}</code></td><td>${c.label}</td></tr>`).join("");
+    const cards = Object.entries(TEST_CARDS).map(([pan, c]) => {
+        // Show what a funded card has left, so the balance check is visible.
+        const left = balances.has(pan)
+            ? ` <strong>— solde ${(balances.get(pan) / 100).toFixed(2)} DZD</strong>`
+            : "";
+        return `<tr><td><code>${pan}</code></td><td>${c.label}${left}</td></tr>`;
+    }).join("");
     return SHELL(L.title, `<div class="card">
   <div class="head"><strong>SATIM</strong><span class="sec">🔒 ${L.title}</span></div>
   <div class="body">
@@ -385,6 +411,26 @@ async function notify(order, why) {
     }
 }
 
+/**
+ * Ask the issuer to authorise this attempt.
+ *
+ * A card with a balance is checked against the order amount and debited on
+ * approval; everything else uses its fixed outcome.
+ */
+function authorise(order, card) {
+    if (typeof card.balanceMinor !== "number") return card.authorise;
+
+    const pan = order.current.pan;
+    const available = balances.get(pan) ?? 0;
+    if (available < order.amountMinor) {
+        log(`issuer: ${pan} declined — needs ${order.amountMinor}, has ${available} minor units`);
+        return card.insufficient;
+    }
+    balances.set(pan, available - order.amountMinor);
+    log(`issuer: ${pan} approved ${order.amountMinor} — ${balances.get(pan)} minor units left`);
+    return card.authorise;
+}
+
 /** Apply an issuer outcome to the order and notify the merchant. */
 async function settle(order, outcome, why) {
     order.outcome = outcome;
@@ -450,7 +496,7 @@ async function handlePay(form, res, req) {
     await sleep(LATENCY);
 
     if (card.threeDS === "none") {
-        await settle(order, card.authorise, "authorised");
+        await settle(order, authorise(order, card), "authorised");
         return finishAttempt(order, res);
     }
     return sendHtml(res, otpPage(order));
@@ -469,7 +515,7 @@ async function handle3ds(form, res) {
 
     if (correct) {
         log(`3ds: ${order.orderId} authenticated`);
-        await settle(order, attempt.card.authorise, "authorised");
+        await settle(order, authorise(order, attempt.card), "authorised");
         return finishAttempt(order, res);
     }
 
@@ -529,6 +575,9 @@ const server = createServer(async (req, res) => {
     }
     if (path === "/__reset" && req.method === "POST") {
         orders.clear(); byRequestId.clear(); byOrderNumber.clear(); armedFaults = [];
+        for (const [pan, card] of Object.entries(TEST_CARDS)) {
+            if (typeof card.balanceMinor === "number") balances.set(pan, card.balanceMinor);
+        }
         return sendJson(res, { ok: true });
     }
     if (path === "/__expire" && req.method === "POST") {
@@ -541,6 +590,11 @@ const server = createServer(async (req, res) => {
         if (!order) return sendJson(res, { sent: false });
         await notify(order, "replay");
         return sendJson(res, { sent: true });
+    }
+    if (path === "/__balances") {
+        return sendJson(res, Object.fromEntries(
+            [...balances].map(([pan, minor]) => [pan, `${(minor / 100).toFixed(2)} DZD`]),
+        ));
     }
     if (path === "/__orders") {
         return sendJson(res, [...orders.values()].map((o) => ({

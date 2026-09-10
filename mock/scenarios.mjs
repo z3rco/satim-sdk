@@ -43,6 +43,10 @@ export function brandOf(pan) {
  * `authorise` runs only once authentication succeeded. `orderStatus: null`
  * means the gateway reports no `OrderStatus` at all, which is what a real
  * decline looks like on the wire.
+ *
+ * A card carrying `balanceMinor` is checked against the order amount and
+ * debited on approval, falling back to its `insufficient` outcome when the
+ * account is short. Refunds credit it back.
  */
 export const TEST_CARDS = {
     "6280581000000007": {
@@ -124,6 +128,30 @@ export const TEST_CARDS = {
             actionCodeDescription: "Émetteur indisponible, réessayez",
             respCode: "91",
             respCodeDesc: "Émetteur indisponible",
+        },
+    },
+    "6280581000000072": {
+        label: "CIB — funded account, 10 000,00 DA balance",
+        threeDS: "pass",
+        // A real balance the issuer checks against the amount, and debits on
+        // approval. Whether this card is approved or declined depends on what
+        // is left, not on a script — so the decline is earned, and draining it
+        // across several orders is a state no scripted card can reach.
+        balanceMinor: 1_000_000,
+        authorise: {
+            orderStatus: "2",
+            actionCode: "0",
+            actionCodeDescription: "Votre paiement a été accepté",
+            respCode: "00",
+            respCodeDesc: "Paiement accepté",
+        },
+        insufficient: {
+            orderStatus: null,
+            actionCode: "2003",
+            actionCodeDescription: "Provision insuffisante",
+            respCode: "116",
+            respCodeDesc: "Provision insuffisante",
+            errorMessage: "Payment is declined",
         },
     },
     "5078001000000004": {
