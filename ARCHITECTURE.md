@@ -4,12 +4,12 @@ Internal design of the SATIM SDK. For usage, see the root [README](./README.md).
 
 ## System topology
 
-Twenty TypeScript files organised by concern. Dependency direction is strict: lower layers never import from higher ones.
+Twenty-one TypeScript files organised by concern. Dependency direction is strict: lower layers never import from higher ones.
 
 | Layer | Files | Responsibility |
 |-------|-------|----------------|
 | Primitives | `exceptions.ts`, `types.ts` | Exception hierarchy, public type definitions. No internal deps. |
-| Math | `money.ts`, `idempotency.ts` | IEEE-754-safe currency conversion, deterministic key derivation. |
+| Math | `money.ts`, `crypto.ts`, `idempotency.ts` | IEEE-754-safe currency conversion, runtime-agnostic SHA-256/CSPRNG, deterministic key derivation. |
 | Validation | `validation.ts`, `ssrf.ts` | Pure validators for fluent setters and URL safety. |
 | Configuration | `config.ts` | `SatimConfig` base class. Holds credentials in a module-private `WeakMap` and provides the immutable fluent setter API. |
 | Transport | `client.ts`, `circuit-breaker.ts` | HTTP POST against the SATIM REST API, retry policy, circuit breaker. |
@@ -23,13 +23,13 @@ Twenty TypeScript files organised by concern. Dependency direction is strict: lo
 A `register()` call traverses every layer once:
 
 1. Caller chains fluent setters on `Satim`. Each setter clones the config, mutates the clone, returns it. The original is never modified.
-2. `register()` calls `validateForRegister` (asserts `returnUrl` and `amount` are set), then `getFinalOrderNumber` (uses the configured order number or generates a random 10-digit one via `node:crypto.randomInt`).
+2. `register()` calls `validateForRegister` (asserts `returnUrl` and `amount` are set), then `getFinalOrderNumber` (uses the configured order number or generates a random 10-character base-36 one from `crypto.getRandomValues`).
 3. `buildData` assembles the form payload. It strips `force_terminal_id` from user-defined fields and always sets it from the credential store — user input cannot override the terminal binding.
 4. `httpClientService.handleApiRequest` runs the request. Retries are enabled iff an `externalRequestId` (idempotency key) is set.
-5. Before each network attempt, `assertTlsSafe` aborts if `NODE_TLS_REJECT_UNAUTHORIZED=0` is in the environment.
+5. `assertTlsSafe` aborts if `NODE_TLS_REJECT_UNAUTHORIZED=0` is in the environment. This runs before the breaker gate so a configuration fault never consumes a `HALF_OPEN` probe.
 6. The circuit breaker is consulted. If `OPEN` and the reset timeout has not elapsed, the call throws `SatimUnexpectedResponseError` with `errorCategory: "circuit_open"`.
 7. `fetch` POSTs `application/x-www-form-urlencoded`. Anti-caching headers are set on every request because POST bodies carry credentials.
-8. On 5xx or timeout, the breaker records a failure and the loop retries with exponential backoff (`500ms × 2^attempt`, plus 0–50% jitter).
+8. On any transient failure — 5xx, timeout, connection failure, malformed payload — the breaker records a failure. Retryable ones (everything but malformed payloads) go round the loop again with exponential backoff (`500ms × 2^attempt`, plus 0–50% jitter).
 9. The response body is parsed. `validateApiResponse` maps `ErrorCode` to typed exceptions (see [Error classification](#error-classification)).
 10. The JSON is passed to `new RegisterResponse(raw)`. Its constructor runs `validateRegisterSchema` and then `structuredClone`s the payload into the instance.
 
@@ -80,12 +80,17 @@ States: `CLOSED` → `OPEN` → `HALF_OPEN` → `CLOSED`.
 
 | Transition | Trigger |
 |------------|---------|
-| `CLOSED → OPEN` | `failureThreshold` consecutive transient failures (5xx, timeout). Default 5. |
+| `CLOSED → OPEN` | `failureThreshold` consecutive transient failures. Default 5. |
 | `OPEN → HALF_OPEN` | `resetTimeoutMs` elapses since opening. Default 30 000 ms. Lazy: the transition fires the next time `allowRequest()` is called. |
 | `HALF_OPEN → CLOSED` | Probe request succeeds. |
 | `HALF_OPEN → OPEN` | Probe request fails. Reset timer starts over. |
+| `HALF_OPEN → HALF_OPEN` | Probe unreported for `resetTimeoutMs`: treated as abandoned, a fresh probe is admitted. |
+
+A transient failure is a timeout, a connection-level failure (DNS, ECONNREFUSED, TLS), a 5xx response, or a malformed/non-object payload. A 4xx is not: it means the SDK sent something the gateway disliked, which waiting cannot fix. The `NODE_TLS_REJECT_UNAUTHORIZED=0` guard is checked before the breaker gate, so a configuration fault neither counts as a failure nor consumes the single `HALF_OPEN` probe.
 
 In `HALF_OPEN`, at most one probe request is admitted concurrently. `allowRequest()` checks `probeInFlight` and rejects extra calls until the probe resolves. This prevents a recovering gateway from being hit by a thundering herd.
+
+The single-probe rule needs the accounting invariant below to hold, and needs a backstop for when it does not. `probeInFlight` is cleared only by `onSuccess()`/`onFailure()`, so a probe whose outcome is never reported would otherwise leave the breaker rejecting every request for the life of the process, with no timer able to recover it. An unreported probe is therefore treated as abandoned after `resetTimeoutMs`.
 
 `getState()` reflects a timed-out `OPEN` as `HALF_OPEN` for external inspection even before `allowRequest()` mutates the state.
 
@@ -96,6 +101,7 @@ In `HALF_OPEN`, at most one probe request is admitted concurrently. `allowReques
 | Endpoint | Retryable | Rationale |
 |----------|-----------|-----------|
 | `/register.do`, `/registerPreAuth.do` | Iff `_idempotencyKey` is set | Without an idempotency key, retrying after a timeout could create duplicate orders (`ErrorCode: 1`). With one, the gateway deduplicates. |
+| `/getOrderStatus.do` (webhook replay path) | `true` | An already-processed order is re-read rather than re-acknowledged. |
 | `/public/acknowledgeTransaction.do` (`confirm`) | `false` | Final-state query; retry would double-fire any merchant-side side effects derived from the response. |
 | `/getOrderStatus.do` (`status`) | `true` | Idempotent read. |
 | `/refund.do` | `false` | Mutation without idempotency primitive. |
@@ -103,19 +109,19 @@ In `HALF_OPEN`, at most one probe request is admitted concurrently. `allowReques
 
 Backoff is exponential with 0–50% jitter: `BASE_RETRY_DELAY_MS × 2^attempt + uniform(0, 0.5 × base)`. Defaults: `BASE = 500ms`, `maxRetries = 2`. Maximum total backoff at defaults: ~2.25 seconds.
 
-The retry loop and the circuit breaker interact carefully: each transient failure is counted at most once per attempt regardless of which code path threw, controlled by the `counted` flag in `sendRequest`.
+**Accounting invariant:** a `true` from `allowRequest()` must be answered by exactly one `onSuccess()`/`onFailure()`. Every attempt in `sendRequest` therefore funnels through a single `catch`, which normalises the error and makes one accounting decision. An exit path reporting neither would blind the breaker to that failure mode entirely, and would strand the breaker if the attempt happened to be the `HALF_OPEN` probe.
 
 ### Zero-trust webhook verification
 
 SATIM does not sign callback payloads. The handler treats the payload as untrusted and re-fetches authoritative state:
 
 1. Extract `orderId` from the source (string, URL, Web `Request`, or object). Reject anything that fails the strict `[a-zA-Z0-9\-]{1,128}` format.
-2. Apply rate limit. If the sliding window is full, return `null`.
+2. Apply rate limit. If the sliding window is full, reject with `rate_limited`. `inspect()` surfaces that reason so the caller can answer `429` and have SATIM redeliver; `verify()` collapses it to `null`, which an unwary caller answers `200` — silently dropping a real payment notification.
 3. Acquire the per-`orderId` in-flight lock. Concurrent calls for the same order wait on the first; the lock prevents the check-then-mark race within a single process.
-4. Call `onCheckDuplicate(orderId)`. If true, return the verified response with `duplicate: true`.
-5. Call `onResolveAmount(orderId)` to retrieve the merchant's expected amount. Unknown orders return `null`.
-6. Call `satim.confirm(orderId, expectedAmount)`. `confirm` runs `verifyAmount()` automatically on success.
-7. If the response is not `isPending()`, call `onMarkProcessed(orderId)`. Pending orders are not marked, so subsequent callbacks can re-check as the order progresses to a terminal state.
+4. Call `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)` in parallel — independent lookups, typically both hitting the merchant's database. An unknown order (nullish amount) returns without touching the gateway.
+5. Fetch authoritative state. A first-time callback uses `satim.confirm(orderId, expectedAmount)`, which runs `verifyAmount()` automatically on success. An already-processed order uses `satim.status(orderId)` instead — both return live state, but `/public/acknowledgeTransaction.do` is a mutating acknowledgement and replays must not re-fire it. The replay path re-asserts the amount explicitly.
+6. If the response reached a **terminal** `OrderStatus` — deposited (`"2"`), refunded (`"4"`), reversed (`"3"`) — call `onMarkProcessed(orderId)`. Every other state stays unmarked.
+7. Marking is one-way: later callbacks for a marked order return `duplicate: true`, which callers are told not to fulfil. So the test is "definitely finished", not "not pending". A pre-authorized hold (`"1"`) still has a capture to come, and a declined attempt (no `OrderStatus` at all) may still be followed by a successful card retry on the same order — marking either would leave a paid customer unfulfilled.
 
 This model is strictly stronger than HMAC verification. A valid signature proves the payload was issued by the gateway; it does not prove the payload reflects current state. Replay and stale-webhook attacks pass signature checks but cannot pass live re-verification.
 

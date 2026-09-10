@@ -14,7 +14,7 @@ This is strictly stronger than HMAC signature verification: a valid signature pr
 |------|----------------|
 | [`rate-limiter.ts`](./rate-limiter.ts) | `SlidingWindowRateLimiter`. Binary-search expiry pruning with a head pointer; periodic array compaction. `check()` is amortised `O(log n)` per call. |
 | [`extract.ts`](./extract.ts) | `extractOrderId`. Multi-source extraction from string, URL, Web `Request`, or plain object with `orderId`. Returns `null` for anything that fails the strict `[a-zA-Z0-9\-]{1,128}` format. |
-| [`handler.ts`](./handler.ts) | `WebhookHandler`. The public class. Orchestrates extraction, rate limit, in-flight lock, duplicate check, `confirm()`, and mark-processed. |
+| [`handler.ts`](./handler.ts) | `WebhookHandler`. The public class. Orchestrates extraction, rate limit, in-flight lock, duplicate check, gateway verification, and mark-processed. Exposes `verify()` (`WebhookResult \| null`) and `inspect()` (a `WebhookOutcome` carrying the rejection reason). |
 
 ## Dependencies
 
@@ -28,14 +28,22 @@ This is strictly stronger than HMAC signature verification: a valid signature pr
 
 `handler.verify(source)`:
 
-1. **Extract** orderId via `extract.ts`. Invalid → return `null`.
-2. **Rate limit** via the sliding window. Exceeded → return `null`.
-3. **In-flight lock**. If another `verify()` is already running for this `orderId`, await it and return `{ duplicate: true, response: <its response> }`. Otherwise acquire the lock for the duration of this call.
-4. **Duplicate check** via `onCheckDuplicate(orderId)`. If true, still call `onResolveAmount` and `satim.confirm()` so the caller receives the same verified response, but flagged `duplicate: true`.
-5. **Resolve expected amount** via `onResolveAmount(orderId)`. Unknown order → return `null` (do not call the gateway for orders the merchant does not recognise).
-6. **Server-to-server verification**: `satim.confirm(orderId, expectedAmount)`. `confirm` runs `verifyAmount()` automatically on success.
-7. **Mark processed** via `onMarkProcessed(orderId)` only if the response is **not** `isPending()`. Pending orders are intentionally not marked so subsequent callbacks can re-check as the order progresses to a terminal state.
-8. Release the in-flight lock in `finally`.
+1. **Extract** orderId via `extract.ts`. Invalid → `invalid_source`.
+2. **Rate limit** via the sliding window. Exceeded → `rate_limited`. Answer this with `429`/5xx so SATIM redelivers; answering `200` silently discards a real payment notification.
+3. **In-flight lock**. If another verification is already running for this `orderId`, await it and return `{ duplicate: true, response: <its response> }`. Otherwise acquire the lock for the duration of this call.
+4. **Duplicate check and expected amount** via `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)`, run in parallel — independent lookups. Unknown order (nullish amount) → `unknown_order`, without calling the gateway.
+5. **Server-to-server verification**. First-time callbacks call `satim.confirm(orderId, expectedAmount)`, which runs `verifyAmount()` automatically on success. Already-processed orders call `satim.status(orderId)` instead: both return authoritative live state, but `/public/acknowledgeTransaction.do` is a mutating acknowledgement that replays should not re-fire, and `status()` is idempotent so it retries and de-duplicates. The replay path re-asserts the amount explicitly.
+6. **Mark processed** via `onMarkProcessed(orderId)` only once the order reaches a terminal `OrderStatus` — deposited (`"2"`), refunded (`"4"`), or reversed (`"3"`).
+7. Release the in-flight lock in `finally`.
+
+### Why marking is terminal-only
+
+Marking is one-way: every later callback for a marked order comes back `duplicate: true`, which callers are told not to fulfil. So the test must be "definitely finished", not "not pending":
+
+- **Pre-authorized** (`"1"`) is a fund hold awaiting capture. Marking it means the capture callback arrives as a duplicate and the order is never fulfilled.
+- **Declined, cancelled and expired** responses carry no `OrderStatus` at all. A customer who retries their card on the same order and succeeds would otherwise be charged without being fulfilled.
+
+The cost of leaving them unmarked is at most a repeated `status()` read.
 
 ## Distributed deployment
 
@@ -56,6 +64,8 @@ The handler emits a `console.warn` at construction time when neither callback is
 - Complexity: `O(log n)` per `check()` where `n` is the number of unexpired timestamps.
 
 Defaults exposed via `WebhookHandlerOptions`: `maxCallbacksPerWindow = 100`, `rateLimitWindowMs = 60_000`.
+
+The window is **per handler instance and global across orders**, so size it against peak checkout throughput rather than per-customer traffic. Well-formed callbacks for unknown orders consume budget too (the order is only known to be unknown after `onResolveAmount` runs), so a public callback endpoint should sit behind the same edge rate limiting as the rest of the application. Malformed sources are rejected before the limiter and cost nothing.
 
 ## Impact of changes
 

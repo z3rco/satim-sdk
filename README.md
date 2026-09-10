@@ -42,23 +42,27 @@ CIB and Edahabia card payments for Algeria — production-grade, runtime-agnosti
 | Node.js               | ≥ 20    | Native `fetch` required |
 | Bun                   | ≥ 1.0   |                         |
 | Deno                  | ≥ 1.28  |                         |
-| Cloudflare Workers    | All     | Edge-runtime safe       |
+| Cloudflare Workers    | All     | No `nodejs_compat` flag needed |
 | Vercel / Netlify Edge | All     |                         |
+
+The package has no `node:` imports and no runtime dependencies: it needs
+only `fetch`, `TextEncoder`, `structuredClone` and `crypto.getRandomValues`,
+all of which every runtime above provides natively.
 
 ## Install
 
 ```bash
-npm install satim-module
+npm install satim-sdk
 # or
-bun add satim-module
+bun add satim-sdk
 # or
-pnpm add satim-module
+pnpm add satim-sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { Satim } from 'satim-module';
+import { Satim } from 'satim-sdk';
 
 const satim = new Satim({
   username: process.env.SATIM_USERNAME!,
@@ -102,7 +106,7 @@ if (response.isSuccessful()) {
 | Method                     | Endpoint              | Returns            | Description                           |
 | -------------------------- | --------------------- | ------------------ | ------------------------------------- |
 | `register()`               | `/register.do`        | `RegisterResponse` | Register a payment order.             |
-| `confirm(orderId, amount)` | `/confirmOrder.do`    | `ConfirmResponse`  | Confirm and deposit a payment.        |
+| `confirm(orderId, amount)` | `/public/acknowledgeTransaction.do` | `ConfirmResponse` | Confirm and deposit a payment. |
 | `status(orderId)`          | `/getOrderStatus.do`  | `ConfirmResponse`  | Query the current status of an order. |
 | `refund(orderId, amount)`  | `/refund.do`          | `ConfirmResponse`  | Refund a captured payment.            |
 | `registerPreAuth()`        | `/registerPreAuth.do` | `RegisterResponse` | Hold funds without capturing.         |
@@ -117,14 +121,14 @@ _The configuration is strictly immutable. Calling a setter returns a NEW instanc
 | `amount(n)`            | Payment amount in major currency units (e.g. DZD). |
 | `returnUrl(url)`       | Redirect URL after payment.                        |
 | `failUrl(url)`         | Redirect URL on failure (defaults to `returnUrl`). |
-| `description(text)`    | Text shown on the payment page (max 598 chars).    |
+| `description(text)`    | Text shown on the payment page (max 600 chars).    |
 | `language(lang)`       | Payment page language: `"FR"`, `"AR"`, or `"EN"`.  |
 | `currency(code)`       | `"DZD"`, `"USD"`, or `"EUR"`.                      |
-| `orderNumber(n)`       | Custom 10-digit order number.                      |
+| `orderNumber(n)`       | Custom order number, 1-10 alphanumeric chars.      |
 | `timeout(seconds)`     | Session timeout (600 – 86400).                     |
 | `userDefinedFields()`  | Custom metadata forwarded in `jsonParams`.         |
 | `dynamicCallbackUrl()` | Server-to-server webhook for status notifications. |
-| `setTestMode(bool)`    | Route requests to `test.satim.dz`.                 |
+| `setTestMode(bool)`    | Route requests to `test2.satim.dz`.                |
 
 ### Status Predicates (on `ConfirmResponse`)
 
@@ -162,12 +166,53 @@ Available on `RegisterResponse` or `ConfirmResponse`:
 | `getErrorMessage()`   | ConfirmResponse  | Localized error text                          |
 | `getRawResponse()`    | Both             | Sanitized raw gateway response (PII redacted) |
 
+## Webhooks
+
+SATIM does not sign its callbacks, so the handler ignores the payload and
+re-fetches authoritative state from the gateway on every invocation.
+
+```typescript
+const handler = satim.createWebhookHandler({
+  // Your source of truth for what this order should cost.
+  onResolveAmount: (orderId) => db.orders.findByGatewayId(orderId)?.totalDZD,
+  // Multi-instance deployments must make these atomic (Redis SETNX,
+  // INSERT ... ON CONFLICT DO NOTHING). The default is an in-memory Set.
+  onCheckDuplicate: (orderId) => redis.exists(`satim:done:${orderId}`),
+  onMarkProcessed: (orderId) => redis.set(`satim:done:${orderId}`, '1'),
+});
+
+app.post('/satim/callback', async (req, res) => {
+  const outcome = await handler.inspect(req.query);
+
+  if (!outcome.verified) {
+    // Each reason needs a different answer. Returning 200 for
+    // `rate_limited` tells SATIM the callback was handled and it will
+    // never redeliver — a silently lost payment notification.
+    const status = { invalid_source: 400, unknown_order: 404, rate_limited: 429 }[outcome.reason];
+    return res.sendStatus(status);
+  }
+
+  const { response, duplicate } = outcome.result;
+  if (response.isSuccessful() && !duplicate) await fulfilOrder(outcome.result.orderId);
+  res.sendStatus(200);
+});
+```
+
+`verify(source)` is the simpler form, returning `WebhookResult | null`. It
+cannot distinguish the three rejection reasons, so prefer `inspect()`
+anywhere the HTTP status matters.
+
+An order is only marked processed once it reaches a **terminal** state —
+deposited, refunded, or reversed. Pre-authorized holds, declines and
+expiries stay unmarked so that a later capture or a customer's successful
+card retry is still delivered as `duplicate: false` and gets fulfilled.
+
 ## Error Handling
 
 All errors extend `SatimError` for unified catching:
 
 ```typescript
-import { SatimError, SatimGatewayError } from 'satim-module';
+import { SatimError, SatimGatewayError } from 'satim-sdk';
 
 try {
   await satim.register();
@@ -194,8 +239,8 @@ The SDK ships with the following protections enabled by default:
 - **Credential isolation** — Credentials live in a module-private `WeakMap` and never appear as enumerable properties. `JSON.stringify()` and `console.log()` automatically redact them. (The SATIM API requires credentials as POST form parameters on every request — make sure reverse proxies, WAFs, and APM tools do not log raw request bodies.)
 - **SSRF protection** — All URLs are validated against private IP ranges (IPv4/IPv6), cloud metadata endpoints, and non-standard IP encodings (decimal, octal, hex).
 - **Terminal-ID injection prevention** — `force_terminal_id` is always set by the SDK and cannot be overridden via `userDefinedFields`.
-- **IEEE 754-safe currency conversion** — Amounts are converted to minor units using `toPrecision(12)` to avoid floating-point drift. Sub-centime amounts that would round to zero are rejected. The precision guard caps at ~10 billion major units.
-- **Safe retry policy** — Financial mutations (`register`, `confirm`, `refund`, `reverseOrder`) never retry on transient errors, preventing double-charges or double-refunds. Only idempotent queries (`status`) retry automatically.
+- **IEEE 754-safe currency conversion** — Amounts are converted to minor units through a single guarded path (`Math.round(amount * 100)` behind a relative-epsilon precision check), never by ad-hoc float arithmetic. Amounts carrying sub-centime precision are rejected rather than silently rounded. The guard caps at ~10 billion major units.
+- **Safe retry policy** — `confirm`, `refund` and `reverseOrder` never retry on transient errors, preventing double-charges or double-refunds. Idempotent queries (`status`) always retry; `register`/`registerPreAuth` retry only when an idempotency key is set (as `safeRegister` does), because the gateway then deduplicates on it.
 - **Immutable API** — Every setter returns a new instance, preventing cross-request state leaks.
 
 ### Best practices
@@ -224,6 +269,7 @@ bun install       # install dev dependencies
 bun test          # run the unit test suite (vitest)
 npm run typecheck # strict type checking (any runtime)
 npm run build     # compile to dist/
+npm run smoke     # load dist/ in plain Node and check the public API
 npm run docs      # generate TypeDoc API reference
 ```
 

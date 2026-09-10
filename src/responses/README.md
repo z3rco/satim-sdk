@@ -12,7 +12,7 @@ Validate raw gateway JSON at the SDK boundary, then expose typed accessors and s
 |------|----------------|
 | [`schema.ts`](./schema.ts) | Runtime schema validators (`validateRegisterSchema`, `validateConfirmSchema`). Normalises number→string coercions for fields the SATIM spec serialises inconsistently (`OrderStatus`, `ErrorCode`, `actionCode`). |
 | [`register.ts`](./register.ts) | `RegisterResponse`. Wraps `/register.do` and `/registerPreAuth.do` results. Provides `getOrderId`, `getUrl`, and `redirectResponse` (which enforces HTTPS and a trusted `*.satim.dz` hostname). |
-| [`confirm.ts`](./confirm.ts) | `ConfirmResponse`. Wraps `/confirmOrder`, `/getOrderStatus`, `/refund`, `/reverse` results. Provides typed accessors, the mutually-exclusive status predicates, amount verification, and PII-redacted raw response access. |
+| [`confirm.ts`](./confirm.ts) | `ConfirmResponse`. Wraps `/public/acknowledgeTransaction.do` (confirm), `/getOrderStatus.do`, `/refund.do`, `/reverse.do` results. Provides typed accessors, the mutually-exclusive status predicates, amount verification, and PII-redacted raw response access. |
 
 ## Dependencies
 

@@ -13,6 +13,7 @@ The SATIM API requires `userName` and `password` to be sent as `application/x-ww
 - **WeakMap isolation** — credentials cannot be enumerated via `Object.keys`, `JSON.stringify`, `console.log`, or prototype traversal.
 - **Serialization redaction** — `toJSON()` and Node.js inspect handlers return `[REDACTED]` for all credential fields.
 - **Anti-caching headers** — all outbound requests include `Cache-Control: no-store, no-cache` and `Pragma: no-cache` to prevent intermediary caching of credential-bearing POST bodies.
+- **Hashed in-flight keys** — the request-deduplication map keys on a SHA-256 of the form body rather than the body itself, so the merchant password is not left readable in a `Map` key for the duration of a request.
 
 ### Recommendations
 
@@ -59,9 +60,18 @@ HMAC signature verification (as used by Chargily, Stripe, etc.) proves that the 
 
 The zero-trust model fetches live authoritative state on every callback. Even a perfectly forged or replayed callback only triggers a fresh server-to-server verification against the real gateway. The amount is always verified against your own source of truth.
 
-### Pending payments
+### Terminal-state marking
 
-Payments in a `pending` state are **not** marked as processed by the webhook handler. This allows them to be re-checked on subsequent callbacks as the payment transitions to a terminal state (successful, failed, cancelled, expired, etc.).
+An order is marked processed only once the gateway reports a state it can never leave: deposited (`OrderStatus` `"2"`), refunded (`"4"`), or reversed (`"3"`). Everything else stays unmarked so subsequent callbacks keep re-verifying.
+
+This matters because marking is one-way: every later callback for a marked order arrives as `duplicate: true`, which callers are told not to fulfil. Two states in particular must not be marked early:
+
+- **Pre-authorized** (`"1"`) is a fund hold awaiting capture. Marking it means the capture callback arrives as a duplicate and the order is never fulfilled.
+- **Declined, cancelled and expired** responses carry no `OrderStatus` at all. A customer who retries their card on the same order and succeeds would otherwise be charged without being fulfilled.
+
+### Rate-limited callbacks
+
+The handler's sliding window is per handler instance and counts all orders. Callbacks over the limit are **rejected, not queued**. Use `handler.inspect(source)` rather than `handler.verify(source)` so a `rate_limited` rejection can be answered with `429` (or any 5xx) and redelivered — answering `200` tells SATIM the callback was handled and it will never resend, silently losing a real payment notification.
 
 ## SSRF Protection
 
@@ -80,7 +90,7 @@ In practice, this risk is mitigated because these URLs are sent **to the SATIM g
 
 ## Retry Behavior
 
-The HTTP client retries transient errors (5xx responses and timeouts) up to 2 times with exponential backoff and jitter. This prevents a single transient failure from breaking a payment flow while avoiding accidental gateway overload.
+The HTTP client retries transient errors (5xx responses, timeouts, and connection-level failures such as DNS or TLS errors) up to 2 times with exponential backoff and jitter. Malformed payloads and 4xx responses are never retried — the gateway will produce the same answer. This prevents a single transient failure from breaking a payment flow while avoiding accidental gateway overload.
 
 **Registration endpoints** (`/register.do`, `/registerPreAuth.do`) are **only retried when an idempotency key is set** (via `idempotencyKey()` or automatically by `safeRegister()`/`safeRegisterPreAuth()`). Without an idempotency key, retrying a registration after a timeout could result in duplicate orders (ErrorCode 1).
 
@@ -101,8 +111,10 @@ These guards close a class of attacks where TypeScript's compile-time checks are
 
 The HTTP client includes a circuit breaker that tracks consecutive transient failures and opens the circuit when a threshold is exceeded. This prevents cascading failures from overwhelming a degraded gateway.
 
+- **Complete failure accounting** — every transport failure mode counts toward opening the circuit: timeouts, connection failures, 5xx responses, and malformed payloads (a gateway proxy answering `200` with an HTML error page is degraded, whatever the status line says). 4xx responses do not, since those indicate a client-side fault that waiting will not fix.
 - **HALF_OPEN probe safety** — only a single probe request is allowed through when the circuit transitions from OPEN to HALF_OPEN. Concurrent requests during the probe window are rejected immediately, preventing a flood of requests to a recovering gateway.
-- **Automatic recovery** — a successful probe closes the circuit; a failed probe re-opens it with a fresh reset timer.
+- **Automatic recovery** — a successful probe closes the circuit; a failed probe re-opens it with a fresh reset timer. A probe whose outcome is never reported is treated as abandoned after `resetTimeoutMs` and a fresh probe is admitted, so no single request can leave the breaker permanently rejecting traffic.
+- **Configuration faults are not gateway faults** — the `NODE_TLS_REJECT_UNAUTHORIZED=0` guard trips before the breaker gate, so a local misconfiguration neither counts as a failure nor consumes the single probe.
 
 ## Amount Precision Safety
 
