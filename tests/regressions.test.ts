@@ -396,3 +396,63 @@ describe("baseUrl override", () => {
         expect(seen[1]).toContain("test2.satim.dz");
     });
 });
+
+// ─── Local development escape hatch ──────────────────────────────────
+
+describe("allowPrivateUrls", () => {
+    const satim = () => new Satim(CREDS);
+
+    test("loopback callback URLs are rejected by default", () => {
+        for (const url of ["http://localhost:3000/cb", "http://127.0.0.1:3000/cb", "http://[::1]:3000/cb"]) {
+            expect(() => satim().returnUrl(url)).toThrow(/private\/reserved/);
+            expect(() => satim().failUrl(url)).toThrow(/private\/reserved/);
+            expect(() => satim().dynamicCallbackUrl(url)).toThrow(/private\/reserved/);
+        }
+    });
+
+    test("the rejection tells the developer how to proceed", () => {
+        expect(() => satim().returnUrl("http://localhost:3000/cb"))
+            .toThrow(/allowPrivateUrls\(true\)/);
+    });
+
+    test("opting in allows them on all three URL setters", () => {
+        const dev = satim().allowPrivateUrls(true);
+        expect(() => dev.returnUrl("http://localhost:3000/return")).not.toThrow();
+        expect(() => dev.failUrl("http://192.168.1.5:3000/fail")).not.toThrow();
+        expect(() => dev.dynamicCallbackUrl("http://127.0.0.1:3000/cb")).not.toThrow();
+    });
+
+    test("the opt-in survives cloning through other setters", () => {
+        expect(() => satim()
+            .allowPrivateUrls(true)
+            .amount(5000)
+            .description("x")
+            .returnUrl("http://localhost:3000/return")).not.toThrow();
+    });
+
+    test("it is per-instance and does not leak to other clients", () => {
+        satim().allowPrivateUrls(true).returnUrl("http://localhost:3000/return");
+        // A second client must still reject the very same URL: a lenient
+        // check must never populate the shared validation cache.
+        expect(() => satim().returnUrl("http://localhost:3000/return")).toThrow(/private\/reserved/);
+    });
+
+    test("turning it back off restores the guard", () => {
+        const dev = satim().allowPrivateUrls(true);
+        expect(() => dev.allowPrivateUrls(false).returnUrl("http://localhost:3000/cb")).toThrow();
+    });
+
+    test("public URLs are unaffected either way", () => {
+        for (const client of [satim(), satim().allowPrivateUrls(true)]) {
+            expect(() => client.returnUrl("https://shop.dz/return")).not.toThrow();
+        }
+    });
+
+    test("obfuscated encodings normalise to loopback and stay blocked when strict", () => {
+        // WHATWG URL rewrites all of these to 127.0.0.1 before validation,
+        // so strict mode rejects them as loopback rather than as encodings.
+        for (const url of ["http://2130706433/x", "http://0x7f000001/x", "http://0177.0.0.1/x"]) {
+            expect(() => satim().returnUrl(url)).toThrow();
+        }
+    });
+});

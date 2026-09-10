@@ -8,11 +8,12 @@
  * to a live panel in the browser).
  *
  *     npm run shop          # starts the mock gateway and this server
- *     open http://shop.localtest.me:8788
+ *     open http://localhost:8788
  *
- * `shop.localtest.me` resolves to loopback but reads as an ordinary public
- * hostname, so it passes the SDK's SSRF guard, which rejects `localhost`
- * and `127.0.0.1` in returnUrl / dynamicCallbackUrl.
+ * The SDK refuses loopback and private URLs for returnUrl / failUrl /
+ * dynamicCallbackUrl, because those are handed to the gateway and pointing
+ * them inward is how SSRF happens. `allowPrivateUrls(true)` below is the
+ * documented development escape hatch — never set it in production.
  */
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -22,7 +23,7 @@ import { Satim, HttpClientService, SatimError } from "../../dist/index.js";
 
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT ?? 8787);
 const SHOP_PORT = Number(process.env.SHOP_PORT ?? 8788);
-const HOSTNAME = process.env.SHOP_HOSTNAME ?? "shop.localtest.me";
+const HOSTNAME = process.env.SHOP_HOSTNAME ?? "localhost";
 const SHOP_ORIGIN = `http://${HOSTNAME}:${SHOP_PORT}`;
 const GATEWAY = `http://localhost:${GATEWAY_PORT}`;
 
@@ -111,6 +112,7 @@ async function checkout(body) {
 
     const started = Date.now();
     const registration = await satim
+        .allowPrivateUrls(true)   // development only — see the file header
         .amount(total)
         .currency("DZD")
         .language("FR")
@@ -332,10 +334,7 @@ async function checkHostname() {
         return true;
     } catch {
         console.log(`\n${C.yellow}${HOSTNAME} does not resolve on this machine.${C.reset}`);
-        console.log(`The SDK's SSRF guard rejects localhost and 127.0.0.1 in returnUrl and`);
-        console.log(`dynamicCallbackUrl, so the demo needs a hostname that looks public.\n`);
-        console.log(`Add this line to /etc/hosts and rerun:\n`);
-        console.log(`    127.0.0.1  ${HOSTNAME}\n`);
+        console.log(`Unset SHOP_HOSTNAME to fall back to localhost.\n`);
         return false;
     }
 }

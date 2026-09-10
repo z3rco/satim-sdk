@@ -82,6 +82,15 @@ All user-supplied URLs (`returnUrl`, `failUrl`, `dynamicCallbackUrl`) are valida
 - Non-standard IP encodings (decimal, octal, hex) that bypass naive filters
 - Known internal hostnames (`localhost`, `metadata.google.internal`)
 
+### Local development
+
+`allowPrivateUrls(true)` disables the private-address checks for the
+instance it is called on, so a local server can receive redirects and
+callbacks. It is off by default, is per instance, never populates the
+shared validation cache, and still rejects obfuscated IP encodings. It is a
+development affordance: enabling it in production re-opens the SSRF surface
+these checks exist to close.
+
 ### Known Limitation: DNS Rebinding
 
 URL validation occurs **at configuration time only**. The SDK does not perform DNS resolution or re-validation at request time. A domain that resolves to a public IP during validation could later resolve to a private IP via DNS rebinding.

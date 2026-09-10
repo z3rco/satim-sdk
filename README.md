@@ -129,6 +129,7 @@ _The configuration is strictly immutable. Calling a setter returns a NEW instanc
 | `userDefinedFields()`  | Custom metadata forwarded in `jsonParams`.         |
 | `dynamicCallbackUrl()` | Server-to-server webhook for status notifications. |
 | `setTestMode(bool)`    | Route requests to `test2.satim.dz`.                |
+| `allowPrivateUrls()`   | Permit loopback/private callback URLs (dev only).  |
 
 ### Status Predicates (on `ConfirmResponse`)
 

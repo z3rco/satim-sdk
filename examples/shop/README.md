@@ -10,7 +10,7 @@ npm run build
 npm run shop
 ```
 
-Then open **<http://shop.localtest.me:8788>**.
+Then open **<http://localhost:8788>**.
 
 Add a few items, hit *Payer par carte*, and you are redirected to the
 gateway's hosted payment page. Pick a test card there and the flow comes
@@ -70,17 +70,24 @@ Paid orders get a *Rembourser* button, which calls `satim.refund()`.
 - **`/return` is treated as untrusted** — anyone can call it with any
   orderId. It renders; it does not decide.
 
-## Why `shop.localtest.me` and not `localhost`
+## Local callback URLs
 
-The SDK's SSRF guard rejects `localhost` and `127.0.0.1` in `returnUrl`,
-`failUrl` and `dynamicCallbackUrl` — correct in production, awkward here.
-`localtest.me` and its subdomains resolve to loopback while reading as an
-ordinary public hostname, so the guard allows them.
+The SDK refuses loopback and private addresses in `returnUrl`, `failUrl`
+and `dynamicCallbackUrl`: those URLs are handed to the gateway, and
+pointing them at internal addresses is how SSRF happens. Local development
+obviously needs them, so there is an explicit opt-in:
 
-If that domain does not resolve on your machine, the server says so at
-startup and tells you the `/etc/hosts` line to add. An ngrok tunnel works
-too, and is what you would use to receive real callbacks during
-certification.
+```ts
+satim.allowPrivateUrls(true).returnUrl("http://localhost:8788/return")
+```
+
+Call it **before** the URL setters — each URL is validated as it is set.
+Never set it in production. Obfuscated IP encodings stay rejected either
+way, and the opt-in is per instance: it cannot leak into another client
+through the shared validation cache.
+
+For callbacks from the *real* gateway you need a publicly reachable URL,
+so an ngrok-style tunnel is what you would use during certification.
 
 ## What this does not prove
 

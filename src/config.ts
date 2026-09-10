@@ -42,6 +42,8 @@ export class SatimConfig {
     protected _sessionTimeoutSecs?: number;
     protected _idempotencyKey?: string;
     protected _userDefinedFields: Record<string, string> = {};
+    /** Development escape hatch for the SSRF guard. See {@link allowPrivateUrls}. */
+    protected _allowPrivateUrls = false;
 
     /** @returns Merchant username. Protected — never exposed publicly. */
     protected get username(): string { return _credentials.get(this)!.username; }
@@ -101,6 +103,7 @@ export class SatimConfig {
         c._sessionTimeoutSecs = this._sessionTimeoutSecs;
         c._idempotencyKey = this._idempotencyKey;
         c._userDefinedFields = { ...this._userDefinedFields };
+        c._allowPrivateUrls = this._allowPrivateUrls;
         const creds = _credentials.get(this);
         if (creds) _credentials.set(c, { ...creds });
         return c;
@@ -148,7 +151,7 @@ export class SatimConfig {
      * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
      */
     public failUrl(url: string): this {
-        assertSafeUrl(url, "Invalid fail URL. Must be a valid http/https URL.");
+        assertSafeUrl(url, "Invalid fail URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._failUrl = url; return c;
     }
 
@@ -157,7 +160,7 @@ export class SatimConfig {
      * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
      */
     public returnUrl(url: string): this {
-        assertSafeUrl(url, "Invalid return URL. Must be a valid http/https URL.");
+        assertSafeUrl(url, "Invalid return URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._returnUrl = url; return c;
     }
 
@@ -166,7 +169,7 @@ export class SatimConfig {
      * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
      */
     public dynamicCallbackUrl(url: string): this {
-        assertSafeUrl(url, "Invalid dynamic callback URL. Must be a valid http/https URL.");
+        assertSafeUrl(url, "Invalid dynamic callback URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._dynamicCallbackUrl = url; return c;
     }
 
@@ -229,6 +232,26 @@ export class SatimConfig {
     public timeout(seconds: number): this {
         assertTimeout(seconds);
         const c = this.clone(); c._sessionTimeoutSecs = seconds; return c;
+    }
+
+    /**
+     * Permit loopback and private-network URLs in {@link returnUrl},
+     * {@link failUrl} and {@link dynamicCallbackUrl}.
+     *
+     * Off by default: those URLs are handed to the gateway, and pointing
+     * them at internal addresses is how SSRF happens. Turn it on to run
+     * against a local server, and never in production.
+     *
+     * Call it **before** the URL setters — validation happens as each URL
+     * is set, so a clone that has not been told yet still rejects them.
+     * Obfuscated IP encodings stay rejected either way.
+     *
+     * ```ts
+     * satim.allowPrivateUrls(true).returnUrl("http://localhost:3000/return")
+     * ```
+     */
+    public allowPrivateUrls(enabled: boolean): this {
+        const c = this.clone(); c._allowPrivateUrls = enabled === true; return c;
     }
 
     /**

@@ -96,13 +96,18 @@ It also reproduces two details worth knowing:
 
 `returnUrl`, `failUrl` and `dynamicCallbackUrl` are validated against
 private and loopback addresses, so `http://localhost:3000/callback` is
-**rejected** — correct in production, awkward locally. The demo uses
-`shop.localtest.me`, which resolves to loopback while reading as an ordinary
-public hostname. A `/etc/hosts` entry or an ngrok tunnel works too.
+rejected by default. Opt in explicitly for local work:
 
-That the guard can be sidestepped this way is the DNS-rebinding limitation
-already documented in [SECURITY.md](../SECURITY.md): the check is lexical,
-not resolution-based.
+```ts
+satim.allowPrivateUrls(true).dynamicCallbackUrl("http://localhost:3000/callback")
+```
+
+Call it before the URL setters, and never in production. Obfuscated IP
+encodings stay rejected either way.
+
+Note the guard is lexical, not resolution-based, so a public hostname that
+resolves to a private address still passes — the DNS-rebinding limitation
+recorded in [SECURITY.md](../SECURITY.md).
 
 ## What this cannot tell you
 

@@ -18,11 +18,9 @@ const GATEWAY_PORT = Number(process.env.PORT ?? 8787);
 const MERCHANT_PORT = Number(process.env.MERCHANT_PORT ?? 8788);
 const GATEWAY = `http://localhost:${GATEWAY_PORT}`;
 
-// The SDK's SSRF guard rejects `localhost` and `127.0.0.1` in returnUrl /
-// dynamicCallbackUrl, which is correct for production and awkward for local
-// development. `localtest.me` and its subdomains resolve to loopback while
-// reading as an ordinary public hostname, so the guard lets them through.
-const MERCHANT = `http://shop.localtest.me:${MERCHANT_PORT}`;
+// Loopback callback URLs need the SSRF guard's development escape hatch,
+// applied on the base instance below so every clone inherits it.
+const MERCHANT = `http://localhost:${MERCHANT_PORT}`;
 
 const ok = (s) => `\x1b[32m${s}\x1b[0m`;
 const bad = (s) => `\x1b[31m${s}\x1b[0m`;
@@ -40,7 +38,7 @@ let callbacksSeen = 0;
 const satim = new Satim(
     { username: "test_merchant", password: "test_password", terminalId: "E005005099" },
     new HttpClientService(false, { baseUrl: `${GATEWAY}/payment/rest`, maxRetries: 2 }),
-);
+).allowPrivateUrls(true);   // development only
 
 const webhook = satim.createWebhookHandler({
     onResolveAmount: (orderId) => ledger.get(orderId),

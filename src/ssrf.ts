@@ -70,6 +70,14 @@ function normalizeIpv6(host: string): string | null {
     return null;
 }
 
+/**
+ * Appended to every private-host rejection. A developer whose local
+ * callback URL is refused needs to be told the way out, not just told no.
+ */
+const PRIVATE_HINT =
+    "URLs pointing to private/reserved addresses are not allowed. "
+    + "For local development call .allowPrivateUrls(true) before setting the URL.";
+
 /** Bounded LRU-ish cache. Keeps `assertSafeUrl` near-constant time across hot paths. */
 const MAX_CACHE = 512;
 const cache = new Set<string>();
@@ -97,7 +105,10 @@ export function isPrivateHost(hostname: string): boolean {
     return Boolean(v6 && PRIVATE_IPV6.some((p) => p.test(v6)));
 }
 
-export function assertSafeUrl(urlStr: string, errorPrefix: string): void {
+export function assertSafeUrl(urlStr: string, errorPrefix: string, allowPrivate = false): void {
+    // The cache only ever holds strictly-validated URLs, so a hit is safe to
+    // trust in either mode. Lenient results are never cached, which stops a
+    // development-mode check from vouching for a URL a strict one must reject.
     if (cache.has(urlStr)) return;
 
     let parsed: URL;
@@ -109,18 +120,22 @@ export function assertSafeUrl(urlStr: string, errorPrefix: string): void {
     }
 
     const host = parsed.hostname.toLowerCase();
-    if (BLOCKED_HOSTNAMES.has(host)) {
-        throw new SatimInvalidArgumentError(`${errorPrefix} URLs pointing to internal/private hosts are not allowed.`);
-    }
+    // Obfuscated encodings are refused even in development: they have no
+    // legitimate use and exist only to slip past checks like this one.
     if (isNonStandardIp(host)) {
         throw new SatimInvalidArgumentError(`${errorPrefix} Non-standard IP address encodings are not allowed.`);
     }
+    if (allowPrivate) return;
+
+    if (BLOCKED_HOSTNAMES.has(host)) {
+        throw new SatimInvalidArgumentError(`${errorPrefix} ${PRIVATE_HINT}`);
+    }
     if (PRIVATE_IPV4.some((p) => p.test(host))) {
-        throw new SatimInvalidArgumentError(`${errorPrefix} URLs pointing to private/reserved IP ranges are not allowed.`);
+        throw new SatimInvalidArgumentError(`${errorPrefix} ${PRIVATE_HINT}`);
     }
     const v6 = normalizeIpv6(host);
     if (v6 && PRIVATE_IPV6.some((p) => p.test(v6))) {
-        throw new SatimInvalidArgumentError(`${errorPrefix} URLs pointing to private/reserved IPv6 ranges are not allowed.`);
+        throw new SatimInvalidArgumentError(`${errorPrefix} ${PRIVATE_HINT}`);
     }
 
     if (cache.size >= MAX_CACHE) cache.delete(cache.values().next().value!);
