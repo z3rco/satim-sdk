@@ -1,18 +1,9 @@
 /**
- * HTTP transport for the SATIM REST API.
- *
- * Responsibilities:
- * - Form-encode and POST request bodies (the gateway requires
- *   `application/x-www-form-urlencoded`, not JSON).
- * - Per-request timeout via `AbortController`.
- * - Exponential-backoff retry on transient failures (5xx, timeout,
- *   connection failure), gated by `options.retryable` from the caller.
- * - Circuit breaker integration for fail-fast on sustained gateway degradation.
- * - Map gateway `ErrorCode` values to typed exceptions.
- * - Refuse to operate when `NODE_TLS_REJECT_UNAUTHORIZED=0` is in the env.
- *
- * Backoff schedule: attempt N waits `BASE × 2^(N-1) + uniform(0, BASE×2^(N-1)×0.5)` ms,
- * where `BASE = 500ms`. Max total delay at defaults (maxRetries=2): ~2.25 s.
+ * HTTP transport for the SATIM REST API: form-encodes and POSTs requests
+ * (gateway requires `application/x-www-form-urlencoded`), applies a
+ * per-request timeout, retries transient failures with exponential
+ * backoff, integrates a circuit breaker, maps `ErrorCode` to typed
+ * exceptions, and refuses to run with `NODE_TLS_REJECT_UNAUTHORIZED=0`.
  * @file
  */
 
@@ -29,12 +20,8 @@ const NON_PRINTABLE = /[^\x20-\x7E]/g;
 
 /**
  * Sanitise a gateway error message before placing it in an SDK exception.
- *
- * Postcondition: returns at most 200 characters of printable ASCII.
- * Strips control characters (which could otherwise break log formats or
- * be used to forge log lines).
- *
- * Complexity: O(n) where n is the input length.
+ * Strips control characters (could forge log lines) and truncates to 200
+ * printable ASCII characters.
  */
 function sanitizeGatewayMessage(msg: string): string {
     return msg.replace(NON_PRINTABLE, "").slice(0, 200);
@@ -42,10 +29,9 @@ function sanitizeGatewayMessage(msg: string): string {
 
 /**
  * True for an abort/timeout rejection from any `fetch` implementation.
- *
- * Matches by `name` so it holds for the global `fetch`'s `DOMException`,
- * for custom fetches that reject with a plain `Error`, and for
- * implementations that surface `AbortSignal.timeout` as `TimeoutError`.
+ * Matches by `name`, not `instanceof DOMException`, because custom
+ * fetches (see {@link HttpClientOptions.fetch}) may reject with a plain
+ * `Error` carrying the same name.
  */
 function isAbortError(error: unknown): boolean {
     if (typeof error !== "object" || error === null) return false;
@@ -53,6 +39,7 @@ function isAbortError(error: unknown): boolean {
     return name === "AbortError" || name === "TimeoutError";
 }
 
+/** Transport tuning for {@link HttpClientService}. All fields optional. */
 export interface HttpClientOptions {
     /**
      * Maximum retries on transient failures (5xx, timeout, connection
@@ -71,28 +58,16 @@ export interface HttpClientOptions {
     circuitBreaker?: CircuitBreakerOptions | false;
     /**
      * Custom `fetch` implementation. Defaults to the global `fetch`.
-     *
-     * Inject an undici `Pool`-backed fetch on Node.js to enable true
-     * connection pooling and HTTP/2 multiplexing:
-     *
-     * ```ts
-     * import { Pool } from "undici";
-     * const pool = new Pool("https://cib.satim.dz");
-     * const satim = new Satim(credentials, { fetch: pool.fetch.bind(pool) });
-     * ```
-     *
-     * On edge runtimes (Cloudflare Workers, Vercel Edge) the global fetch
-     * already pools connections — leave this unset.
+     * Inject an undici `Pool`-backed fetch on Node.js for connection
+     * pooling/HTTP2; leave unset on edge runtimes, which already pool.
      */
     fetch?: typeof globalThis.fetch;
 }
 
 /**
  * HTTP transport. One instance per `Satim` client by default; can be
- * shared across multiple `Satim` instances for connection-pool reuse.
- * Concurrent requests against one instance share the embedded breaker;
- * its counter updates are benign under racing `onFailure()` calls (may
- * transiently overshoot the threshold but the breaker still opens).
+ * shared across instances for connection-pool reuse. Concurrent requests
+ * share the embedded breaker; racing counter updates are benign.
  */
 export class HttpClientService {
     private readonly API_URL = "https://cib.satim.dz/payment/rest";
@@ -110,11 +85,8 @@ export class HttpClientService {
     private readonly _inflight = new Map<string, Promise<unknown>>();
 
     /**
-     * Preconditions: `timeoutMs ∈ [1000, 300000]` when supplied;
-     * `maxRetries` is clamped to `[0, 10]` and floored.
-     *
+     * `timeoutMs` must be in `[1000, 300000]`; `maxRetries` is clamped to `[0, 10]`.
      * @param testMode Route to `test2.satim.dz` when `true`, else `cib.satim.dz`.
-     * @param options Optional transport tuning.
      * @throws {@link SatimInvalidArgumentError} when `timeoutMs` is out of range.
      */
     constructor(private readonly testMode: boolean = false, options?: HttpClientOptions) {
@@ -134,26 +106,12 @@ export class HttpClientService {
 
     /**
      * Send a request and translate gateway error codes into typed exceptions.
-     *
-     * Preconditions: `endpoint` begins with `/` (concatenated with base URL).
-     * `data` carries the form fields to encode.
-     *
-     * Postcondition on success: returns the parsed JSON response object
-     * (always an object, never `null` or primitive).
-     *
-     * Retry: defaults to `true` for callers that omit `options.retryable`.
-     * Mutating endpoints (`register`, `confirm`, `refund`, `reverseOrder`)
-     * pass `false` explicitly unless an idempotency key is set.
-     *
-     * Complexity: O(R × T) where R is `maxRetries + 1` and T is the
-     * per-attempt round-trip time. Backoff between attempts is included.
-     *
+     * `endpoint` must begin with `/`. Defaults `retryable` to `true`;
+     * mutating endpoints pass `false` unless an idempotency key is set.
      * @throws {@link SatimInvalidCredentialsError} on `ErrorCode: "5"`.
      * @throws {@link SatimInvalidArgumentError} on `ErrorCode: "6"`.
      * @throws {@link SatimGatewayError} on `ErrorCode` in `{"1","3","4","7"}`.
-     * @throws {@link SatimUnexpectedResponseError} on any other error
-     *         (network, timeout, parse, non-object response, other
-     *         non-zero `ErrorCode`, circuit open).
+     * @throws {@link SatimUnexpectedResponseError} on any other error.
      */
     public handleApiRequest<T = unknown>(
         endpoint: string,
@@ -167,12 +125,9 @@ export class HttpClientService {
                 .then(result => { this.validateApiResponse(result); return result; });
         }
 
-        // Collapse concurrent identical idempotent requests into one in-flight call.
-        // Two callers awaiting status for the same orderId share one round trip.
-        // The body is hashed rather than used verbatim: it carries the merchant
-        // password, and a raw key would leave that credential sitting in a Map
-        // key where a heap dump or a debugger inspecting `_inflight` would read
-        // it in plaintext.
+        // Collapse concurrent identical idempotent requests into one round trip.
+        // Keyed by a hash, not the raw body: the body carries the merchant
+        // password, and a raw key would leave it readable in `_inflight`.
         const key = `${endpoint}:${sha256Hex(this.buildBody(data))}`;
         const existing = this._inflight.get(key) as Promise<T> | undefined;
         if (existing) return existing;
@@ -190,9 +145,8 @@ export class HttpClientService {
     }
 
     /**
-     * Backoff delay before retry `attempt` (0-indexed):
-     * `BASE × 2^attempt + uniform(0, BASE × 2^attempt × 0.5)`.
-     * Jitter prevents synchronised retry storms across multiple clients.
+     * Backoff delay before retry `attempt` (0-indexed). Jitter prevents
+     * synchronised retry storms across multiple clients.
      */
     private getRetryDelay(attempt: number): number {
         const base = HttpClientService.BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
@@ -200,14 +154,9 @@ export class HttpClientService {
     }
 
     /**
-     * Classify whether a transport error is transient and worth retrying.
-     *
-     * Retryable: timeouts, connection-level failures (`errorCategory:
-     * "network"` — DNS failure, ECONNREFUSED, TLS handshake error), and
-     * 5xx responses. Not retryable: 4xx, malformed-payload (`parse`) and
-     * response-shape errors — the gateway will produce the same bad
-     * payload on the next attempt — and `circuit_open`, which is the
-     * breaker's own fail-fast signal.
+     * Retryable: timeouts, connection failures, 5xx. Not retryable: 4xx
+     * and malformed-payload errors (next attempt would fail the same
+     * way), and `circuit_open` (the breaker's own signal).
      */
     private isRetryable(err: SatimUnexpectedResponseError): boolean {
         if (err.errorCategory === "circuit_open") return false;
@@ -218,16 +167,10 @@ export class HttpClientService {
     }
 
     /**
-     * Decide whether an error is evidence of gateway degradation and
-     * should count toward opening the breaker.
-     *
-     * Counted: timeouts, connection failures, 5xx, and malformed or
-     * non-object payloads (a gateway returning an HTML error page through
-     * its proxy is degraded, even though the HTTP status says 200).
-     *
-     * Not counted: 4xx (the SDK sent something the gateway disliked — a
-     * client-side problem that more waiting will not fix) and
-     * `circuit_open` (the breaker's own output, never its input).
+     * Whether an error counts toward opening the breaker. Counted:
+     * timeouts, connection failures, 5xx, malformed/non-object payloads
+     * (e.g. an HTML error page through a proxy despite HTTP 200). Not
+     * counted: 4xx (client-side, waiting won't help) and `circuit_open`.
      */
     private countsAsGatewayFailure(err: SatimUnexpectedResponseError): boolean {
         if (err.errorCategory === "circuit_open") return false;
@@ -237,13 +180,8 @@ export class HttpClientService {
 
     /**
      * Normalise anything thrown by `fetch` into a `SatimUnexpectedResponseError`.
-     *
-     * Abort detection matches on `name` rather than `instanceof DOMException`:
-     * the global `fetch` rejects aborts with a `DOMException`, but a custom
-     * `fetch` (the documented production path — see {@link HttpClientOptions.fetch})
-     * may reject with a plain `Error` or a library-specific class carrying
-     * the same `name`. An `instanceof` check misclassifies those as generic
-     * network errors, which loses the `isTimeout` flag callers branch on.
+     * Relies on {@link isAbortError}'s name-based match so custom `fetch`
+     * implementations still set `isTimeout` correctly.
      */
     private toTransportError(error: unknown): SatimUnexpectedResponseError {
         if (error instanceof SatimUnexpectedResponseError) return error;
@@ -257,11 +195,8 @@ export class HttpClientService {
     }
 
     /**
-     * Refuse to operate when TLS verification is disabled.
-     *
-     * Called at the start of every request — checking once at construction
-     * would let a process set the env variable after the SDK was instantiated.
-     *
+     * Refuse to operate when TLS verification is disabled. Checked per
+     * request, not once at construction, so enabling it later is still caught.
      * @throws {@link SatimError} when `NODE_TLS_REJECT_UNAUTHORIZED=0` is in `process.env`.
      */
     private assertTlsSafe(): void {
@@ -274,12 +209,8 @@ export class HttpClientService {
     }
 
     /**
-     * Form-encode the request payload.
-     *
-     * `undefined` / `null` values are omitted. Objects are JSON-stringified
-     * (used for `jsonParams`).
-     *
-     * Complexity: O(k) where k is the number of fields.
+     * Form-encode the request payload. `undefined`/`null` values are
+     * omitted; objects are JSON-stringified (used for `jsonParams`).
      */
     private buildBody(data: Record<string, unknown>): string {
         const body = new URLSearchParams();
@@ -292,32 +223,21 @@ export class HttpClientService {
     }
 
     /**
-     * Single request with retry + circuit breaker integration.
-     *
-     * Circuit breaker accounting: every attempt funnels through the single
-     * `catch` below, which normalises the error and then makes exactly one
-     * accounting decision. This matters more than it looks — the breaker
-     * requires that a `true` from `allowRequest()` be answered by exactly
-     * one `onSuccess()`/`onFailure()`. An exit path reporting neither both
-     * blinds the breaker (it never opens on that failure mode) and, if the
-     * attempt happened to be the `HALF_OPEN` probe, strands the breaker
-     * with `probeInFlight` set. Adding an early `throw` anywhere in the
-     * `try` block is therefore safe; adding one that bypasses this `catch`
-     * is not.
-     *
-     * @throws {@link SatimUnexpectedResponseError} on transport or
-     *         response-shape failures. Wraps unknown errors as
-     *         `errorCategory: "network"`.
+     * Single request with retry + circuit breaker integration. Every
+     * attempt must funnel through the single `catch` below and report
+     * exactly one `onSuccess()`/`onFailure()`: a path reporting neither
+     * blinds the breaker to that failure mode and can strand a
+     * `HALF_OPEN` probe. A `throw` inside `try` is safe; one bypassing
+     * this `catch` is not.
+     * @throws {@link SatimUnexpectedResponseError} on transport/response failures.
      */
     private async sendRequest<T>(
         endpoint: string,
         data: Record<string, unknown>,
         retryable: boolean,
     ): Promise<T> {
-        // Checked before the breaker gate so a configuration fault never
-        // consumes the single HALF_OPEN probe, and re-checked per request
-        // rather than once at construction so a process that disables TLS
-        // verification after instantiating the SDK is still caught.
+        // Checked before the breaker gate so a config fault never consumes
+        // the single HALF_OPEN probe.
         this.assertTlsSafe();
 
         if (this.circuitBreaker && !this.circuitBreaker.allowRequest()) {
@@ -345,8 +265,7 @@ export class HttpClientService {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/x-www-form-urlencoded",
-                        // Anti-caching: POST bodies contain credentials; reverse
-                        // proxies and CDN edge nodes must not cache or store them.
+                        // POST bodies contain credentials; forbid caching by proxies/CDNs.
                         "Cache-Control": "no-store, no-cache",
                         "Pragma": "no-cache",
                     },
@@ -375,10 +294,9 @@ export class HttpClientService {
                 this.circuitBreaker?.onSuccess();
                 return parsed;
             } catch (error) {
-                // A local guard tripping (TLS verification disabled) is a
-                // configuration fault, not a gateway signal: propagate it
-                // untouched and leave the breaker's counters alone, so
-                // fixing the environment does not leave a circuit open.
+                // A tripped local guard (e.g. TLS disabled) is a config
+                // fault, not a gateway signal: propagate untouched, don't
+                // touch breaker counters.
                 if (error instanceof SatimError && !(error instanceof SatimUnexpectedResponseError)) {
                     throw error;
                 }
@@ -394,24 +312,9 @@ export class HttpClientService {
     }
 
     /**
-     * Translate gateway `ErrorCode` into typed exceptions.
-     *
-     * `ErrorCode` mapping:
-     *
-     * | Code | Exception | Notes |
-     * |------|-----------|-------|
-     * | `"0"` / absent | (no error) | Successful response. |
-     * | `"1"` | {@link SatimGatewayError} | Duplicate order — detected by `safeRegister`. |
-     * | `"3"` | {@link SatimGatewayError} | Unknown currency. |
-     * | `"4"` | {@link SatimGatewayError} | Missing required parameter. |
-     * | `"5"` | {@link SatimInvalidCredentialsError} | Invalid username/password/terminal. |
-     * | `"6"` | {@link SatimInvalidArgumentError} | Unknown order ID. |
-     * | `"7"` | {@link SatimGatewayError} | Gateway internal error. |
-     * | any other non-zero | {@link SatimUnexpectedResponseError} | Carries `errorCategory: "gateway"`. |
-     *
-     * Gateway error messages are sanitised via {@link sanitizeGatewayMessage}
-     * before being placed in exceptions.
-     *
+     * Translate gateway `ErrorCode` into typed exceptions; see the `if`
+     * chain below for the code-to-exception mapping. Messages are passed
+     * through {@link sanitizeGatewayMessage} first.
      * @throws The exception corresponding to the gateway's `ErrorCode`.
      */
     private validateApiResponse(response: unknown): void {

@@ -1,13 +1,7 @@
 /**
- * Public barrel export.
- *
- * Consumers should import the SDK's public surface from the package
- * root rather than reaching into individual modules:
- *
- *     import { Satim, SatimError, WebhookHandler } from "satim-sdk";
- *
- * Re-exports are direct (no aliasing or renaming). Adding to this file
- * extends the public API; removing from it is a breaking change.
+ * Public barrel export. Import the SDK's public surface from the
+ * package root, e.g. `import { Satim, SatimError } from "satim-sdk"`.
+ * Adding an export here extends the public API; removing one is breaking.
  * @file
  */
 

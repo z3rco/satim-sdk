@@ -1,28 +1,16 @@
 /**
  * Failure-counting circuit breaker with single-probe `HALF_OPEN` recovery.
  *
- * Sits in front of `HttpClientService.sendRequest`. When the gateway is
- * degraded, the breaker fails the SDK's calls fast instead of letting them
- * stack up on timeouts, and admits exactly one probe request after the
- * reset timeout to test recovery.
- *
- * State machine:
- *
- *     CLOSED ──(failureThreshold consecutive transient failures)──▶ OPEN
- *     OPEN   ──(resetTimeoutMs elapsed, next allowRequest())──────▶ HALF_OPEN
- *     HALF_OPEN ──(probe succeeds)──▶ CLOSED
- *     HALF_OPEN ──(probe fails)─────▶ OPEN (reset timer restarted)
- *
- * In `HALF_OPEN` only one in-flight probe is permitted; concurrent calls
- * receive `false` from `allowRequest()` until the probe resolves. This
- * prevents a recovering gateway from being hit by a thundering herd.
- *
- * All methods are O(1).
+ * CLOSED → OPEN after `failureThreshold` consecutive failures. OPEN →
+ * HALF_OPEN after `resetTimeoutMs`, admitting exactly one probe; success
+ * → CLOSED, failure → OPEN. Only one probe is in flight at a time, so a
+ * recovering gateway isn't hit by a thundering herd.
  * @file
  */
 
 type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
+/** Tuning for {@link CircuitBreaker}. Pass `false` as `circuitBreaker` to disable it entirely. */
 export interface CircuitBreakerOptions {
     /** Consecutive transient failures before opening. Default 5. */
     failureThreshold?: number;
@@ -54,19 +42,14 @@ export class CircuitBreaker {
     }
 
     /**
-     * Decide whether the caller may dispatch a request.
+     * Decide whether the caller may dispatch a request. On `true`, the
+     * caller MUST call {@link onSuccess} or {@link onFailure} once the
+     * request resolves.
      *
-     * Mutates state on `OPEN → HALF_OPEN` transition when the reset
-     * timeout has elapsed. In `HALF_OPEN`, admits at most one concurrent probe.
-     *
-     * Callers SHOULD follow a `true` return with exactly one call to
-     * {@link onSuccess} or {@link onFailure} after the request resolves.
-     * A caller that fails to do so cannot strand the breaker: a probe
-     * still unreported after `resetTimeoutMs` is treated as abandoned and
-     * a fresh probe is admitted. Without that guard a single unreported
-     * probe would leave `probeInFlight` set forever and the breaker would
-     * reject every subsequent request for the life of the process, with
-     * no timer able to recover it.
+     * A probe left unreported for `resetTimeoutMs` is treated as
+     * abandoned and a fresh one is admitted — otherwise `probeInFlight`
+     * (cleared only by onSuccess/onFailure) would stay set forever and
+     * the breaker would reject every request for the life of the process.
      */
     allowRequest(): boolean {
         if (this.state === "CLOSED") return true;

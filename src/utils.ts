@@ -1,13 +1,8 @@
 /**
- * Backwards-compatibility re-export.
- *
- * Tests and downstream consumers may import currency and idempotency
- * primitives from `./utils`; the actual implementations live in
- * {@link ./money} (currency conversion) and {@link ./idempotency}
- * (deterministic key derivation).
- *
- * No logic lives in this file. New code should import from the package
- * root: `import { toMinorUnits, deriveIdempotencyKey } from "satim-sdk"`.
+ * Backwards-compatibility re-export. Real implementations live in
+ * {@link ./money} (currency conversion) and {@link ./idempotency} (key
+ * derivation). No logic here — new code should import from the package
+ * root instead.
  * @file
  */
 

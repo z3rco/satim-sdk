@@ -1,24 +1,11 @@
 /**
- * Primary client facade for the SATIM REST API.
- *
- * Extends `SatimConfig` for the immutable fluent setter API and owns the
- * `HttpClientService` instance. Each endpoint method validates its inputs,
- * builds the form payload, dispatches via the HTTP client, and wraps the
- * response in `RegisterResponse` or `ConfirmResponse`.
- *
- * Retry semantics per endpoint:
- *
- * | Endpoint | Retryable | Why |
- * |----------|-----------|-----|
- * | `register` / `registerPreAuth` | Iff `_idempotencyKey` is set | Otherwise retry could duplicate orders. |
- * | `confirm` | No | Final-state query; retry would double-fire merchant side effects. |
- * | `status` | Yes | Idempotent read. |
- * | `refund` | No | Mutation without idempotency primitive. |
- * | `reverseOrder` | No | Mutation without idempotency primitive. |
- *
- * `safeRegister` / `safeRegisterPreAuth` derive a deterministic idempotency
- * key from the caller's `merchantRef`, set it before dispatch, and
- * translate gateway `ErrorCode: "1"` into {@link SatimDuplicateOrderError}.
+ * Primary client facade for the SATIM REST API. Wraps `HttpClientService`;
+ * each method validates inputs, builds the payload, and returns a
+ * `RegisterResponse`/`ConfirmResponse`.
+ * Retry is enabled only for idempotent calls — `status`, and
+ * `register`/`registerPreAuth` when `_idempotencyKey` is set (otherwise a
+ * retry could duplicate the order) — and never for other endpoints.
+ * `safeRegister*` translates `ErrorCode: "1"` into {@link SatimDuplicateOrderError}.
  * @file
  */
 
@@ -43,13 +30,9 @@ const FORCE_TERMINAL_KEY = "force_terminal_id";
 /**
  * SATIM REST API client.
  *
- * Construction binds credentials to a module-private `WeakMap` entry (see
- * {@link SatimConfig.initFromCredentials}). The HTTP client is either
- * caller-injected or built with the provided options.
- *
- * Instances are safe to share across concurrent requests because every
- * fluent setter returns a clone — no caller can mutate state observed by
- * another caller.
+ * Credentials are bound to a module-private `WeakMap` entry (see
+ * {@link SatimConfig.initFromCredentials}). Every fluent setter returns a
+ * clone, so instances are safe to share across concurrent requests.
  */
 export class Satim extends SatimConfig {
     protected httpClientService: HttpClientService;
@@ -59,17 +42,12 @@ export class Satim extends SatimConfig {
     private readonly _httpClientOptions: HttpClientOptions | undefined;
 
     /**
-     * Preconditions: `credentials` satisfies {@link SatimCredentials} with
-     * all fields non-empty after trim and within length limits (AN.100 / AN.16).
-     *
-     * @param credentials Merchant credentials from CIBWeb.
-     * @param httpClientService Either a pre-built `HttpClientService` (for
-     *        testing or shared connection pools) or an `HttpClientOptions`
-     *        object configuring the default transport.
+     * @param credentials Merchant credentials from CIBWeb, validated
+     *        against {@link SatimCredentials}.
+     * @param httpClientService Pre-built `HttpClientService`, or options
+     *        for the default transport.
      * @throws {@link SatimInvalidArgumentError} / {@link SatimMissingDataError}
-     *         on invalid credentials (via `initFromCredentials`).
-     * @throws {@link SatimInvalidArgumentError} on invalid `timeoutMs`
-     *         when default transport is built.
+     *         on invalid credentials or `timeoutMs`.
      */
     constructor(credentials: SatimCredentials, httpClientService?: HttpClientService | HttpClientOptions) {
         super();
@@ -86,13 +64,11 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Override to rebuild the default HTTP client when `testMode` changes
-     * (the base URL is baked in at construction). A caller-injected
-     * client is preserved verbatim — switching `testMode` will not
-     * replace it.
-     *
-     * @returns Clone with `testMode` set and (if applicable) a fresh
-     *          default `HttpClientService` matching the new mode.
+     * Rebuilds the default HTTP client when `testMode` changes (the base
+     * URL is baked in at construction). A caller-injected client is
+     * preserved as-is.
+     * @returns Clone with `testMode` set and, if applicable, a fresh
+     *          default `HttpClientService`.
      */
     public override setTestMode(isEnabled: boolean): this {
         const clone = super.setTestMode(isEnabled);
@@ -103,13 +79,9 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Override to copy transport-related state alongside config state.
-     *
-     * The base `SatimConfig.clone` only knows about config fields; the
-     * `Satim` subclass owns `httpClientService` and two private flags
-     * that must also propagate. Uses cast-to-any because the fields are
-     * declared `readonly` — only the clone's constructor-equivalent
-     * (this method) may set them.
+     * Also copies transport state (`httpClientService` and two private
+     * flags) that the base `SatimConfig.clone` doesn't know about. Casts
+     * to `any` since those fields are `readonly` outside this method.
      */
     protected override clone(): this {
         const c = super.clone();
@@ -122,23 +94,14 @@ export class Satim extends SatimConfig {
     // ─── Registration endpoints ──────────────────────────────────────────
 
     /**
-     * Register a new payment order via `/register.do`.
-     *
-     * Preconditions: `_returnUrl` and `_amount` are set via the fluent
-     * setters. `_amount` already validated against `assertRegisterAmount`.
-     *
-     * Postcondition: returns a `RegisterResponse` whose `getOrderId` and
-     * `getUrl` are populated.
-     *
-     * Retry: enabled iff `_idempotencyKey` is set.
-     *
-     * Complexity: O(network).
-     *
+     * Register a new payment order via `/register.do`. Requires
+     * `_returnUrl` and `_amount` set; retried automatically iff
+     * `_idempotencyKey` is set.
      * @throws {@link SatimMissingDataError} when required fields are absent.
      * @throws {@link SatimGatewayError} on `ErrorCode` 1, 3, 4, 7.
      * @throws {@link SatimInvalidCredentialsError} on `ErrorCode` 5.
-     * @throws {@link SatimUnexpectedResponseError} on transport failures
-     *         or other non-zero error codes.
+     * @throws {@link SatimUnexpectedResponseError} on transport failures or
+     *         other non-zero error codes.
      */
     public register(): Promise<RegisterResponse> {
         return this.registerAt("/register.do");
@@ -146,12 +109,9 @@ export class Satim extends SatimConfig {
 
     /**
      * Register a pre-authorization (fund hold) via `/registerPreAuth.do`.
+     * Capture later via `confirm()` or release via `reverseOrder()`.
      *
-     * Holds the funds on the customer's card without capturing. Capture
-     * later via `confirm()` or release via `reverseOrder()`.
-     *
-     * Same preconditions, postconditions, retry semantics, and exceptions
-     * as {@link register}.
+     * Same preconditions, retry semantics, and exceptions as {@link register}.
      */
     public registerPreAuth(): Promise<RegisterResponse> {
         return this.registerAt("/registerPreAuth.do");
@@ -161,29 +121,12 @@ export class Satim extends SatimConfig {
 
     /**
      * Confirm (deposit) a payment via `/public/acknowledgeTransaction.do`.
-     *
-     * Preconditions: `orderId` matches the strict order-ID format;
-     * `expectedAmount` passes `assertConfirmAmount` (finite, positive,
-     * ≤ MAX_SAFE_AMOUNT, ≤ 2 decimal places).
-     *
-     * Postcondition: returns a `ConfirmResponse`. When the response
-     * satisfies `isSuccessful()`, `verifyAmount(expectedAmount)` has
-     * already run — a mismatch throws before this method returns.
-     *
-     * Retry: disabled. A retry could double-fire merchant side effects
-     * derived from observing the success state.
-     *
-     * Security: this is the only safe path to confirm a payment. The
-     * automatic amount check defends against partial-capture
-     * manipulation; the call must happen server-side, never from the
-     * customer's browser.
-     *
-     * Complexity: O(network).
-     *
-     * @throws {@link SatimInvalidArgumentError} on malformed `orderId`
-     *         or `expectedAmount`.
-     * @throws {@link SatimUnexpectedResponseError} on amount mismatch
-     *         (carries the expected vs actual minor-unit values).
+     * Not retried — could double-fire side effects. Auto-verifies the
+     * amount (defends against partial-capture manipulation); this is the
+     * only safe confirmation path and must run server-side only, never
+     * from the customer's browser.
+     * @throws {@link SatimInvalidArgumentError} on malformed `orderId` or `expectedAmount`.
+     * @throws {@link SatimUnexpectedResponseError} on amount mismatch.
      * @throws Any gateway/transport exception per `handleApiRequest`.
      */
     public async confirm(orderId: string, expectedAmount: number): Promise<ConfirmResponse> {
@@ -201,18 +144,9 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Query order status via `/getOrderStatus.do`.
-     *
-     * Idempotent — automatically retried on transient failures (5xx, timeout).
-     * Concurrent calls for the same `orderId` are collapsed into a single
-     * in-flight request — the second caller receives the first's response
-     * without a second round trip.
-     *
-     * Preconditions: `orderId` matches the strict order-ID format.
-     *
-     * Complexity: O(network) — but up to `1 + maxRetries` round trips on
-     * transient errors.
-     *
+     * Query order status via `/getOrderStatus.do`. Idempotent — retried
+     * automatically on transient failures, and concurrent calls for the
+     * same `orderId` are collapsed into one in-flight request.
      * @throws {@link SatimInvalidArgumentError} on malformed `orderId`.
      * @throws Any gateway/transport exception per `handleApiRequest`.
      */
@@ -226,15 +160,9 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Query multiple orders in parallel via concurrent `/getOrderStatus.do` calls.
-     *
-     * Fires all queries simultaneously. Concurrent calls for the same `orderId`
-     * are deduplicated by `HttpClientService` — passing duplicates in the array
-     * does not multiply requests.
-     *
-     * Rejects with the first error encountered; all in-flight requests still run
-     * to completion (standard `Promise.all` semantics).
-     *
+     * Query multiple orders in parallel. Duplicate `orderId`s are
+     * deduplicated by `HttpClientService`, not re-requested. Rejects with
+     * the first error; other in-flight requests still run to completion.
      * @throws {@link SatimInvalidArgumentError} on any malformed `orderId`.
      * @throws Any gateway/transport exception per `handleApiRequest`.
      */
@@ -243,19 +171,11 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Pre-warm the TCP+TLS connection to the SATIM gateway.
-     *
-     * Call this once during application startup (or just before a checkout
-     * flow begins) to avoid paying the TCP handshake + TLS negotiation cost
-     * (~50–200 ms) on the first real payment request.
-     *
-     * Sends a single probe request to `/getOrderStatus.do` with a known-unknown
-     * order ID. The gateway responds immediately with ErrorCode 6; the
-     * connection is then established and kept alive for subsequent requests.
-     *
-     * This method never throws — if the probe fails (network down, gateway
-     * unreachable) the error is silently discarded. The only consequence is
-     * that the first real request will incur the normal handshake cost.
+     * Pre-warms the TCP+TLS connection to the gateway, avoiding the
+     * handshake cost (~50-200ms) on the first real request. Sends a
+     * probe to `/getOrderStatus.do` with a known-unknown order ID
+     * (expects `ErrorCode` 6). Never throws — a failed probe is
+     * silently discarded.
      */
     public async warmup(): Promise<void> {
         try {
@@ -268,14 +188,8 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Refund a captured payment via `/refund.do`.
-     *
-     * Retry: disabled. A retry could double-refund.
-     *
-     * Preconditions: `orderId` valid; `amount` passes `assertRefundAmount`
-     * (finite, positive, ≤ MAX_SAFE_AMOUNT, ≤ 2 decimal places, ≥ 1
-     * minor unit after conversion).
-     *
+     * Refund a captured payment via `/refund.do`. Not retried — a
+     * retry could double-refund.
      * @throws {@link SatimInvalidArgumentError} on malformed inputs.
      * @throws Any gateway/transport exception per `handleApiRequest`.
      */
@@ -294,14 +208,10 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Void a pre-settlement payment via `/reverse.do`.
-     *
-     * Cheaper than refund — cancels the authorization before the acquirer
-     * settles, avoiding processing fees. Applies to status `1`
-     * (pre-authorized) and `2` (deposited but not yet settled) orders.
-     *
-     * Retry: disabled.
-     *
+     * Void a pre-settlement payment via `/reverse.do`. Cheaper than
+     * refund — cancels before acquirer settlement, avoiding fees.
+     * Applies to status `1` (pre-authorized) and `2` (deposited,
+     * unsettled). Not retried.
      * @throws {@link SatimInvalidArgumentError} on malformed `orderId`.
      * @throws Any gateway/transport exception per `handleApiRequest`.
      */
@@ -318,27 +228,14 @@ export class Satim extends SatimConfig {
     // ─── Safe (idempotent) registration ──────────────────────────────────
 
     /**
-     * Register with automatic idempotency.
-     *
-     * Derives a deterministic `externalRequestId` and `orderNumber` from
-     * `merchantRef`, then calls {@link register}. Safe to retry — the
-     * gateway deduplicates on the derived key.
-     *
-     * If the gateway returns `ErrorCode: "1"` (duplicate order with a
-     * conflicting amount/currency for the same `merchantRef`), the
-     * `SatimGatewayError` is translated to {@link SatimDuplicateOrderError}
-     * so callers can recover via `status(originalOrderId)` from their
-     * own persistence layer.
-     *
-     * Preconditions: `merchantRef` is a non-empty string after trim;
-     * `_returnUrl` and `_amount` set.
-     *
-     * Postcondition: same as {@link register}.
-     *
+     * Register with automatic idempotency: derives a key + order number
+     * from `merchantRef`, then calls {@link register} (safe to retry —
+     * the gateway dedupes on the derived key). On `ErrorCode: "1"`
+     * (duplicate order, conflicting amount/currency), throws
+     * {@link SatimDuplicateOrderError} instead.
      * @throws {@link SatimInvalidArgumentError} when `merchantRef` is empty.
-     * @throws {@link SatimMissingDataError} when registration prerequisites missing.
+     * @throws {@link SatimMissingDataError} when prerequisites missing.
      * @throws {@link SatimDuplicateOrderError} on conflicting prior registration.
-     * @throws Any other exception `register()` can throw.
      */
     public safeRegister(merchantRef: string): Promise<RegisterResponse> {
         return this.safeRegisterAt(merchantRef, "register");
@@ -359,12 +256,8 @@ export class Satim extends SatimConfig {
 
     /**
      * Build a zero-trust webhook handler bound to this `Satim` instance.
-     *
-     * The handler re-verifies state server-to-server on every callback
-     * via this client's `confirm()` method. See
-     * [`webhook/README.md`](./webhook/README.md) for the verification
-     * flow and distributed-deployment requirements.
-     *
+     * It re-verifies state server-to-server via `confirm()` on every
+     * callback. See [`webhook/README.md`](./webhook/README.md) for the flow.
      * @throws {@link SatimMissingDataError} when `onResolveAmount` is missing.
      * @throws {@link SatimInvalidArgumentError} on rate-limiter parameter violations.
      */
@@ -388,12 +281,9 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Return the configured order number, or generate a random
-     * 10-character base-36 one from the runtime CSPRNG.
-     *
-     * See {@link randomOrderNumber} for why the alphabet is base-36 rather
-     * than decimal: the 36^10 space keeps accidental collisions negligible
-     * across a merchant's whole order history.
+     * Returns the configured order number, or a random 10-char base-36
+     * one (see {@link randomOrderNumber}) — the 36^10 space keeps
+     * collisions negligible across a merchant's order history.
      */
     private getFinalOrderNumber(): string {
         return this._orderNumber ?? randomOrderNumber();
@@ -409,15 +299,12 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Build the form payload for registration.
+     * Builds the form payload for registration.
      *
      * Security: strips `force_terminal_id` from user-supplied
-     * `_userDefinedFields` and always sets it from the credential store.
-     * User input cannot override the terminal binding (defence in depth
-     * alongside the validator-time check in `assertUserField`).
-     *
-     * Postcondition: returns a plain object suitable for `URLSearchParams`
-     * encoding. `undefined` fields are omitted by `buildBody`.
+     * `_userDefinedFields` and always re-sets it from the credential
+     * store, so user input cannot override the terminal binding
+     * (defence in depth alongside `assertUserField`).
      */
     private buildData(orderNumber: string): Record<string, unknown> {
         const { [FORCE_TERMINAL_KEY]: _stripped, ...safeUserFields } = this._userDefinedFields;
@@ -440,11 +327,8 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Shared implementation for `register` and `registerPreAuth`.
-     *
-     * Validates prerequisites, generates/uses the order number, builds
-     * the payload, and dispatches with retry enabled iff an idempotency
-     * key is set.
+     * Shared implementation for `register` and `registerPreAuth`. Retry
+     * is enabled iff `_idempotencyKey` is set (safe to retry only then).
      */
     private async registerAt(endpoint: "/register.do" | "/registerPreAuth.do"): Promise<RegisterResponse> {
         this.validateForRegister();
@@ -459,11 +343,10 @@ export class Satim extends SatimConfig {
     }
 
     /**
-     * Shared implementation for `safeRegister` and `safeRegisterPreAuth`.
-     *
-     * Derives the idempotency key + order number from `merchantRef`,
-     * sets them on a clone, dispatches, and translates `ErrorCode: "1"`
-     * (duplicate order) into {@link SatimDuplicateOrderError}.
+     * Shared implementation for `safeRegister`/`safeRegisterPreAuth`:
+     * derives the idempotency key + order number from `merchantRef`,
+     * dispatches, and translates `ErrorCode: "1"` into
+     * {@link SatimDuplicateOrderError}.
      */
     private async safeRegisterAt(merchantRef: string, mode: "register" | "preauth"): Promise<RegisterResponse> {
         if (!merchantRef || !merchantRef.trim()) {

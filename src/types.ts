@@ -1,8 +1,7 @@
 /**
- * Public type definitions for the SATIM gateway integration.
- *
- * All shapes here are part of the SDK's public API. Adding required fields
- * is a breaking change for callers; adding optional fields is safe.
+ * Public type definitions for the SATIM gateway integration. Adding a
+ * required field here is a breaking change for callers; optional fields
+ * are safe.
  * @file
  */
 
@@ -23,14 +22,10 @@ export type Language = "FR" | "AR" | "EN";
 export type CurrencyCode = "012" | "840" | "978";
 
 /**
- * Merchant credentials issued by CIBWeb. All three fields are required on
- * every outbound request and stored in the SDK's module-private `WeakMap`
- * — they never appear as enumerable instance properties on `Satim`.
- *
- * Invariants enforced at `Satim` construction:
- * - All three strings non-empty after trim.
- * - `username` and `password` ≤ 100 characters (SATIM AN.100).
- * - `terminalId` ≤ 16 characters (SATIM AN.16).
+ * Merchant credentials issued by CIBWeb. Stored in a module-private
+ * `WeakMap` — never appear as enumerable properties on `Satim`. Enforced
+ * at construction: all three non-empty after trim; `username`/`password`
+ * ≤ 100 chars, `terminalId` ≤ 16 chars (SATIM AN.100/AN.16).
  */
 export interface SatimCredentials {
     username: string;
@@ -41,13 +36,10 @@ export interface SatimCredentials {
 /**
  * Response from `/register.do` and `/registerPreAuth.do`.
  *
- * Invariants on successful registration (`errorCode === "0"` or absent):
- * - `orderId` is a non-empty string.
- * - `formUrl` is a non-empty string. Must be HTTPS on a trusted `*.satim.dz`
- *   host before `RegisterResponse.redirectResponse()` will emit a redirect.
- *
- * On failure, `errorCode` is set and the SDK converts it to a typed
- * exception in `HttpClientService.validateApiResponse`.
+ * On success (`errorCode` absent or `"0"`), `orderId` and `formUrl` are
+ * non-empty; `formUrl` must be HTTPS on a trusted `*.satim.dz` host before
+ * `redirectResponse()` will redirect. On failure, `errorCode` is set and
+ * converted to a typed exception in `HttpClientService.validateApiResponse`.
  */
 export interface RegisterOrderResponse {
     orderId: string;
@@ -57,29 +49,16 @@ export interface RegisterOrderResponse {
     [key: string]: unknown;
 }
 
-/**
- * Response from `/public/acknowledgeTransaction.do` (confirm),
- * `/getOrderStatus.do`, `/refund.do`, and `/reverse.do`.
- *
- * `OrderStatus` follows the SATIM/BPC state machine:
- *
+/** Response from confirm/getOrderStatus/refund/reverse. `OrderStatus`:
  * | Value | Meaning |
- * |-------|---------|
- * | `"0"` | Registered, not paid (pending). |
- * | `"1"` | Pre-authorized (funds held, awaiting capture). |
- * | `"2"` | Deposited (success). |
- * | `"3"` | Reversed (authorization voided). |
- * | `"4"` | Refunded. |
- *
- * Failed-payment responses (decline, cancel, expire) typically omit
- * `OrderStatus` and carry diagnostic information in `actionCode`,
- * `params.respCode`, and `ErrorMessage`.
- *
- * `Amount` and `depositAmount` are minor-unit integers (centimes).
- * Cardholder PII (`Ip`, `Pan`, `cardholderName`, `expiration`) is redacted
- * by `ConfirmResponse.getRawResponse()` and accessible only via the typed
- * accessor methods.
- */
+ * |---|---|
+ * | `"0"` | Registered, unpaid |
+ * | `"1"` | Pre-authorized |
+ * | `"2"` | Deposited (success) |
+ * | `"3"` | Reversed |
+ * | `"4"` | Refunded |
+ * `Amount`/`depositAmount` are minor-unit integers; cardholder PII is
+ * redacted by `getRawResponse()`. */
 export interface ConfirmOrderResponse {
     OrderStatus?: string;
     actionCode?: string;

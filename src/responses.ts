@@ -1,13 +1,7 @@
 /**
- * Backwards-compatibility re-export.
- *
- * Tests and downstream consumers may import response wrappers from
- * `./responses`; the actual implementations live in
- * {@link ./responses/register} and {@link ./responses/confirm}, with
- * runtime schema validation in {@link ./responses/schema}.
- *
- * No logic lives in this file. New code should import from the package
- * root: `import { RegisterResponse, ConfirmResponse } from "satim-sdk"`.
+ * Backwards-compatibility re-export. Real implementations live in
+ * {@link ./responses/register} and {@link ./responses/confirm}. No logic
+ * here — new code should import from the package root instead.
  * @file
  */
 

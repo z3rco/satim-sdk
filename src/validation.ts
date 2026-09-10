@@ -1,16 +1,8 @@
 /**
- * Pure field validators for `SatimConfig` fluent setters and `Satim`
- * endpoint methods.
- *
- * All functions are side-effect-free and throw {@link SatimInvalidArgumentError}
- * on failure. Validation is the SDK's first line of defence — every public
- * setter and endpoint method runs the relevant validator before mutating
- * state or dispatching a request. The validators close a class of attacks
- * where TypeScript's compile-time checks are bypassed by plain JavaScript
- * callers or `as any` casts.
- *
- * Every validator is O(1) (regex-against-bounded-length, single arithmetic
- * check, or single membership test).
+ * Pure field validators for `SatimConfig` setters and `Satim` endpoint
+ * methods. Side-effect-free; throw {@link SatimInvalidArgumentError} on
+ * failure. First line of defence against callers who bypass TypeScript's
+ * compile-time checks (plain JS, `as any` casts).
  * @file
  */
 
@@ -42,8 +34,8 @@ function assertAmountShape(amount: number, field: string): void {
 }
 
 /**
- * Validate an amount for `register()` / `registerPreAuth()`.
- * Enforces SATIM's 50 DA minimum and whole-dinar requirement on top of the shape checks.
+ * Amount for `register()`/`registerPreAuth()` — shape checks plus SATIM's
+ * 50 DA minimum and whole-dinar rule.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertRegisterAmount(amount: number): void {
@@ -58,9 +50,8 @@ export function assertRegisterAmount(amount: number): void {
 }
 
 /**
- * Validate an amount supplied to `confirm()`. Shape-only — `confirm` accepts any
- * well-formed major-unit value (including fractional dinars), comparing it against
- * whatever the gateway reports.
+ * Amount for `confirm()` — shape-only; fractional dinars are allowed since
+ * it's compared against whatever the gateway reports.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertConfirmAmount(amount: number): void {
@@ -68,9 +59,8 @@ export function assertConfirmAmount(amount: number): void {
 }
 
 /**
- * Validate an amount for `refund()`. Adds the constraint that the value must convert
- * to at least 1 minor unit, rejecting inputs like `0.001` that would otherwise round
- * to zero centimes and silently produce a no-op refund.
+ * Amount for `refund()` — shape checks plus a minimum of 1 minor unit,
+ * rejecting values like `0.001` that would round to a silent no-op refund.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertRefundAmount(amount: number): void {
@@ -81,9 +71,8 @@ export function assertRefundAmount(amount: number): void {
 }
 
 /**
- * Validate an order ID. Format: `/^[a-zA-Z0-9\-]{1,128}$/`. Rejects whitespace-only,
- * overlong, and inputs with characters that could be injected into URLs or SQL/log
- * lines downstream.
+ * Order ID: `/^[a-zA-Z0-9\-]{1,128}$/`. Rejects whitespace-only, overlong,
+ * or characters injectable into URLs/logs downstream.
  * @throws {@link SatimInvalidArgumentError} with `context` included in the message.
  */
 export function assertOrderId(orderId: string, context: string): void {
@@ -99,8 +88,8 @@ export function assertOrderId(orderId: string, context: string): void {
 }
 
 /**
- * Validate a payment-page description. SATIM AN.600 limit; `<` and `>` rejected as
- * defence-in-depth against HTML/markup smuggling into gateway-rendered surfaces.
+ * Payment-page description, SATIM AN.600 limit. `<`/`>` rejected as
+ * defence-in-depth against markup smuggling into gateway-rendered surfaces.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertDescription(description: string): void {
@@ -130,8 +119,8 @@ export function assertLanguage(lang: unknown): asserts lang is Language {
 }
 
 /**
- * Validate a custom order number (SATIM AN.10). Returns the value coerced to
- * string — caller should store the return value, not the original input.
+ * Custom order number (SATIM AN.10). Returns the value coerced to a
+ * string — store the return value, not the original input.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertOrderNumber(value: string | number): string {
@@ -143,7 +132,7 @@ export function assertOrderNumber(value: string | number): string {
 }
 
 /**
- * Validate a session timeout. Range `[600, 86400]` seconds.
+ * Session timeout, range `[600, 86400]` seconds.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertTimeout(seconds: number): void {
@@ -153,9 +142,8 @@ export function assertTimeout(seconds: number): void {
 }
 
 /**
- * Validate an idempotency key (`externalRequestId`). Format:
- * `/^[a-zA-Z0-9_\-]{1,128}$/` — safe for inclusion in any URL or log surface
- * without escaping.
+ * Idempotency key (`externalRequestId`): `/^[a-zA-Z0-9_\-]{1,128}$/` — safe
+ * for URLs/logs without escaping.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertIdempotencyKey(key: string): void {
@@ -167,12 +155,10 @@ export function assertIdempotencyKey(key: string): void {
 }
 
 /**
- * Validate a user-defined `jsonParams` key/value pair.
- *
- * Rejects keys in {@link RESERVED_JSON_KEYS} — `force_terminal_id`
- * (terminal-ID injection) and `__proto__` / `constructor` / `prototype`
- * (prototype pollution). The 20-character value limit matches SATIM's
- * `udf1`-`udf5` AN.20 spec.
+ * User-defined `jsonParams` key/value pair. Rejects keys in
+ * {@link RESERVED_JSON_KEYS} (`force_terminal_id` — terminal-ID injection;
+ * `__proto__`/`constructor`/`prototype` — prototype pollution). Value
+ * limit is 20 chars (SATIM `udf1`-`udf5` AN.20).
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertUserField(key: string, value: string): void {
@@ -196,9 +182,8 @@ export function assertUserField(key: string, value: string): void {
 }
 
 /**
- * Type guard for credential string fields. Rejects objects that structurally
- * satisfy `SatimCredentials` but carry non-string payloads (e.g. crafted
- * objects with `.trim()` methods).
+ * Type guard for credential fields — rejects objects that structurally
+ * match `SatimCredentials` but carry non-string values.
  * @throws {@link SatimInvalidArgumentError}
  */
 export function assertCredentialString(value: unknown, field: string): asserts value is string {

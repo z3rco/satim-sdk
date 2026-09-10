@@ -1,22 +1,17 @@
 /**
  * Sliding-window rate limiter with binary-search expiry pruning.
  *
- * Stores arrival timestamps in a sorted array. On each `check()`, advances
- * a `head` pointer past expired entries using binary search (`O(log n)`)
- * instead of `Array.shift()` (`O(n)`). The array is periodically compacted
- * once the head crosses 1000 entries, amortising the `slice` cost.
+ * Stores arrival timestamps in a sorted array and advances a `head`
+ * pointer past expired entries via binary search instead of
+ * `Array.shift()`, compacting once `head` crosses 1000.
  * @file
  */
 
 /**
  * Tracks request arrival timestamps in a sliding window of fixed duration.
  *
- * Not thread-safe across event-loop ticks: a `check()` call observes the
- * current state and may add to the array. Concurrent calls from different
- * async contexts could in principle race, but in practice JavaScript's
- * single-threaded execution means only one `check()` runs at a time per
- * process — the race is impossible without explicit `await` interleaving
- * inside `check()` (which there isn't).
+ * Safe without locks: JavaScript's single-threaded execution means only
+ * one `check()` runs at a time, and `check()` contains no `await`.
  */
 export class SlidingWindowRateLimiter {
     private timestamps: number[] = [];
@@ -35,19 +30,7 @@ export class SlidingWindowRateLimiter {
     }
 
     /**
-     * Admit or reject the current request.
-     *
-     * Side effects: prunes the head pointer past expired entries;
-     * compacts the array when `head > 1000`; appends `now` on admission.
-     *
-     * Postcondition on `true`: `timestamps.length - head` strictly
-     * increased by 1.
-     *
-     * Postcondition on `false`: state unchanged (no append).
-     *
-     * Complexity: O(log n) per call for binary search, where n is the
-     * unexpired timestamp count. Compaction is `O(n)` but amortised to
-     * `O(1)` per call by the 1000-entry threshold.
+     * Admit or reject the current request, pruning expired entries first.
      *
      * @returns `true` if the request is admitted, `false` if rate limited.
      */

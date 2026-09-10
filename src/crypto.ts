@@ -1,24 +1,11 @@
 /**
- * Runtime-agnostic cryptographic primitives.
+ * Runtime-agnostic SHA-256 and CSPRNG. `crypto.subtle` is async and
+ * `node:crypto` is absent or gated on edge runtimes, so this module ships
+ * an in-tree SHA-256 (FIPS 180-4) with no `node:` imports and draws
+ * randomness from the universal `crypto.getRandomValues`.
  *
- * The SDK needs exactly two things from a crypto layer: a synchronous
- * SHA-256 (for deterministic idempotency-key and order-number derivation)
- * and a CSPRNG (for default order numbers). Neither is available
- * synchronously from WebCrypto — `crypto.subtle.digest` is async — and
- * `node:crypto` is absent on Vercel Edge and gated behind `nodejs_compat`
- * on Cloudflare Workers.
- *
- * This module therefore ships a compact SHA-256 (FIPS 180-4) implemented
- * on `Uint32Array`, and draws randomness from `crypto.getRandomValues`,
- * which is a global in every runtime the SDK supports (Node ≥ 20, Bun,
- * Deno, Cloudflare Workers, Vercel/Netlify Edge). The result is a package
- * with no `node:` imports at all — importing it never fails on an edge
- * runtime.
- *
- * The digest is used for deriving stable identifiers, never for signing
- * or authenticating anything; correctness against the spec is verified
- * in `tests/crypto.test.ts` by differential-testing every output against
- * `node:crypto`.
+ * Used only to derive stable identifiers, never to sign. Digests are
+ * differential-tested against `node:crypto` in `tests/crypto.test.ts`.
  * @file
  */
 
@@ -42,11 +29,7 @@ function rotr(x: number, n: number): number {
 const encoder = new TextEncoder();
 
 /**
- * SHA-256 of a UTF-8 string, lowercase hex.
- *
- * Complexity: O(n) in the byte length of `input`, one pass over each
- * 64-byte block with a reused message schedule.
- *
+ * SHA-256 of a UTF-8 string.
  * @returns 64 lowercase hex characters.
  */
 export function sha256Hex(input: string): string {
@@ -110,19 +93,14 @@ const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
 export const ORDER_NUMBER_LENGTH = 10;
 
 /**
- * Largest multiple of 36 that fits in a byte (36 × 7 = 252). Bytes at or
- * above this are discarded so `% 36` stays uniform — a plain `byte % 36`
- * would favour the first four symbols of the alphabet.
+ * Largest multiple of 36 that fits in a byte. Bytes at or above this are
+ * discarded (rejection sampling) so `% 36` stays uniform.
  */
 const REJECTION_BOUND = 252;
 
 /**
- * Generate a cryptographically random 10-character base-36 order number.
- *
- * Uses `crypto.getRandomValues` with rejection sampling. The 36^10 space
- * puts the 50 % birthday-collision point near 60 million orders, versus
- * ~95 000 for the 10-digit numeric space this replaced.
- *
+ * Generate a cryptographically random 10-character base-36 order number,
+ * via `crypto.getRandomValues` with rejection sampling.
  * @throws Error when the runtime exposes no Web Crypto global.
  */
 export function randomOrderNumber(): string {
@@ -147,12 +125,9 @@ export function randomOrderNumber(): string {
 }
 
 /**
- * Map a hex digest onto a fixed-width base-36 string.
- *
- * Consumes 64 bits of the digest (2^64 ≈ 1.8 × 10^19) and reduces modulo
- * 36^10 ≈ 3.66 × 10^15. The ~5000:1 ratio between the two makes the
- * modulo bias negligible.
- *
+ * Map a hex digest onto a fixed-width base-36 string. Consumes 64 bits
+ * of the digest and reduces modulo `36^length`; the ~5000:1 ratio for
+ * length 10 keeps modulo bias negligible.
  * @param hex A hex digest of at least 16 characters.
  */
 export function hexToBase36(hex: string, length: number = ORDER_NUMBER_LENGTH): string {

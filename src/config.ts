@@ -1,21 +1,10 @@
 /**
- * Immutable fluent configuration base class with module-private credential isolation.
- *
- * Credentials live in a module-scoped `WeakMap<SatimConfig, Creds>`
- * declared inside this file. The mapping is unreachable from outside the
- * module — there is no exported accessor. Consequences:
- *
- * - `Object.keys(satim)`, `Reflect.ownKeys(satim)`, `JSON.stringify(satim)`,
- *   and prototype-chain traversal never expose credentials.
- * - `toJSON()`, `Symbol.for("nodejs.util.inspect.custom")`, and
- *   `Symbol.toPrimitive` all return `[REDACTED]` for the credential fields.
- * - `clone()` copies the entry from one `WeakMap` slot to another; the
- *   clone is a peer in the same map, never a holder of duplicated
- *   instance fields.
- *
- * Every fluent setter calls `clone()` and returns the clone. Cross-request
- * state leaks are impossible by construction: callers who share a base
- * `Satim` instance always observe their own configured copy.
+ * Immutable fluent configuration base class. Credentials live in a
+ * module-private `WeakMap<SatimConfig, Creds>` with no exported accessor,
+ * so they never appear in `Object.keys`, `JSON.stringify`, or inspect
+ * output. Every fluent setter clones (copying the `WeakMap` entry to the
+ * new instance) and returns the clone, so shared instances can't leak
+ * state across requests.
  * @file
  */
 
@@ -30,29 +19,15 @@ import {
 
 interface Creds { username: string; password: string; terminalId: string; }
 
-/**
- * Module-private credential store.
- *
- * The `WeakMap` keys instances of `SatimConfig` directly so that when an
- * instance is garbage-collected its credentials become unreachable
- * automatically — no manual disposal required.
- */
+/** Module-private credential store; keyed by instance so GC reclaims credentials automatically. */
 const _credentials = new WeakMap<SatimConfig, Creds>();
 
 const CURRENCIES: Record<string, CurrencyCode> = { DZD: "012", USD: "840", EUR: "978" };
 
 /**
- * Configuration carrier subclassed by `Satim`.
- *
- * State invariants:
- * - `_amount`, `_returnUrl`, `_failUrl`, `_description`, `_orderNumber`,
- *   `_sessionTimeoutSecs`, `_dynamicCallbackUrl`, `_idempotencyKey` are
- *   `undefined` until set, then validated values.
- * - `_language` and `_currency` always carry default values (`"FR"`, `"012"`).
- * - `_userDefinedFields` always references a fresh object after `clone()`
- *   so concurrent mutation through a child setter does not leak into the parent.
- * - Credentials are present in `_credentials.get(this)` exactly once after
- *   `initFromCredentials` runs; re-initialization is rejected.
+ * Configuration carrier subclassed by `Satim`. Optional fields are
+ * `undefined` until set; `_language`/`_currency` default to `"FR"`/`"012"`;
+ * `_userDefinedFields` is a fresh object after each `clone()`.
  */
 export class SatimConfig {
     protected testMode = false;
@@ -77,15 +52,7 @@ export class SatimConfig {
 
     /**
      * Bind credentials to this instance via the module-private `WeakMap`.
-     *
-     * Preconditions: this instance has no credentials currently bound;
-     * all three fields are non-empty strings after trim, with `username`
-     * and `password` ≤ 100 chars and `terminalId` ≤ 16 chars.
-     *
-     * Runtime type guards reject objects that satisfy `SatimCredentials`
-     * structurally but carry non-string payloads. Cannot be called twice
-     * on the same instance.
-     *
+     * Cannot be called twice on the same instance.
      * @throws {@link SatimInvalidArgumentError} when credentials are
      *         already bound, any field is non-string, or length limits
      *         (AN.100 / AN.16) are exceeded.
@@ -115,23 +82,9 @@ export class SatimConfig {
 
     /**
      * Produce a fresh `SatimConfig` (or subclass) with the same state.
-     *
-     * Uses `Object.create(Object.getPrototypeOf(this))` so the clone is
-     * the same concrete class. Fields are copied explicitly — not via
-     * `Object.assign` — so subclasses can override `clone()` to copy their
-     * own additional fields without risk of `Object.assign` accidentally
-     * copying internal state from the wrong source.
-     *
-     * `_userDefinedFields` is spread (shallow copy) so child setters do
-     * not mutate the parent's object.
-     *
-     * Credentials are copied from `_credentials.get(this)` to
-     * `_credentials.set(clone, …)` — the credential map gets a peer
-     * entry, not a shared reference to the same triple.
-     *
-     * Complexity: O(k) where k is the number of user-defined fields.
-     * Effectively O(1) for typical use.
-     *
+     * Fields are copied explicitly so subclasses can extend `clone()`
+     * safely. Credentials get a peer `WeakMap` entry, not a shared
+     * reference, so the clone can't leak state into `this`.
      * @returns Independent clone safe to mutate without affecting `this`.
      */
     protected clone(): this {
@@ -246,14 +199,10 @@ export class SatimConfig {
     }
 
     /**
-     * Set a single `jsonParams` key/value pair.
-     *
-     * Reserved keys (`force_terminal_id`, `__proto__`, `constructor`,
-     * `prototype`) are rejected here as the first line of defence against
-     * terminal-ID injection and prototype pollution. The `Satim.buildData`
-     * method strips `force_terminal_id` again before send, providing
-     * defence in depth.
-     *
+     * Set a single `jsonParams` key/value pair. Reserved keys
+     * (`force_terminal_id`, `__proto__`, `constructor`, `prototype`) are
+     * rejected as defence against terminal-ID injection and prototype
+     * pollution; `Satim.buildData` also strips `force_terminal_id`.
      * @throws {@link SatimInvalidArgumentError} on reserved keys, malformed
      *         keys, non-string values, or values exceeding 20 characters.
      */
@@ -263,14 +212,8 @@ export class SatimConfig {
     }
 
     /**
-     * Set multiple `jsonParams` key/value pairs.
-     *
-     * Iterates own enumerable properties only; inherited and symbol-keyed
-     * properties are ignored. Each pair is validated as if passed to
-     * {@link userDefinedField}.
-     *
-     * Complexity: O(n) where n is the number of fields.
-     *
+     * Set multiple `jsonParams` key/value pairs (own enumerable properties
+     * only). Each pair is validated as if passed to {@link userDefinedField}.
      * @throws {@link SatimInvalidArgumentError} on the first invalid entry.
      */
     public userDefinedFields(fields: Record<string, string>): this {
@@ -289,17 +232,10 @@ export class SatimConfig {
     }
 
     /**
-     * Set the idempotency key (`externalRequestId`).
-     *
-     * Setting an idempotency key enables automatic retries for `register()`
-     * and `registerPreAuth()` — see `Satim.registerAt`. Without a key,
-     * registration is not retried because a retry after a timeout could
-     * create a duplicate order on the gateway.
-     *
-     * Use {@link deriveIdempotencyKey} to derive a stable key from your
-     * internal order reference, or call `safeRegister(merchantRef)` for
-     * a one-shot wrapper that does the derivation.
-     *
+     * Set the idempotency key (`externalRequestId`). Enables automatic
+     * retries for `register()`/`registerPreAuth()`; without one, retrying
+     * after a timeout could create a duplicate order. Use
+     * {@link deriveIdempotencyKey} or `safeRegister(merchantRef)` to derive one.
      * @throws {@link SatimInvalidArgumentError} on format violations.
      */
     public idempotencyKey(key: string): this {
@@ -310,11 +246,8 @@ export class SatimConfig {
     // ─── Redacting serializers ───────────────────────────────────────────
 
     /**
-     * Custom JSON serializer that redacts credentials.
-     *
-     * Called automatically by `JSON.stringify(satim)`. Returns a snapshot
-     * with `username`, `password`, `terminalId` replaced by `"[REDACTED]"`
-     * and all other configuration state intact (for debugging).
+     * Custom JSON serializer used by `JSON.stringify(satim)`. Returns a
+     * snapshot with credential fields replaced by `"[REDACTED]"`.
      */
     public toJSON(): Record<string, unknown> {
         return {

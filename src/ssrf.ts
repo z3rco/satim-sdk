@@ -1,26 +1,11 @@
 /**
- * SSRF URL validation.
- *
- * Rejects URLs whose target could let an attacker pivot through the SDK
- * (or, via callback delivery, through the SATIM gateway) to internal
- * infrastructure. Applied to every URL-bearing setter: `returnUrl`,
- * `failUrl`, `dynamicCallbackUrl`.
- *
- * Reject categories:
- * - Non-HTTP(S) schemes.
- * - Literal blocked hostnames: `localhost`, `[::1]`, `metadata.google.internal`.
- * - Private/reserved IPv4 ranges per RFC 1918, RFC 3927, RFC 6890.
- * - Private/reserved IPv6 ranges (ULA, link-local, IPv4-mapped/translated
- *   variants, NAT64, unspecified).
- * - Non-standard IP encodings (decimal, octal, hex) that bypass naive
- *   string-based filters.
- *
- * **Known limitation:** validation runs at configuration time only. The
- * SDK does not re-resolve DNS at request time, so a host that resolved
- * to a public IP during validation could later resolve to a private IP
- * via DNS rebinding. The SDK itself does not fetch these URLs — they
- * are forwarded to SATIM for callback delivery — so the residual risk
- * transfers to the callback endpoint operator's egress controls.
+ * SSRF URL validation for `returnUrl`, `failUrl`, `dynamicCallbackUrl`.
+ * Rejects non-HTTP(S) schemes, blocked hostnames, private/reserved
+ * IPv4/IPv6 ranges, and non-standard IP encodings, so an attacker can't
+ * pivot through the SDK (or SATIM's callback delivery) to internal hosts.
+ * Limitation: checked at config time only (DNS rebinding is possible
+ * afterward); the SDK never fetches these URLs, so residual risk sits
+ * with the callback endpoint's egress controls.
  * @file
  */
 
@@ -90,10 +75,8 @@ const MAX_CACHE = 512;
 const cache = new Set<string>();
 
 /**
- * Validate a URL against the reject categories listed in the file header.
+ * Validate a URL against the reject categories in the file header.
  * Validated URLs are cached (bounded LRU, max {@link MAX_CACHE}).
- *
- * @param urlStr URL to validate.
  * @param errorPrefix Message prefix included verbatim in thrown errors.
  * @throws {@link SatimInvalidArgumentError} when the URL is malformed,
  *         non-HTTP(S), targets a blocked hostname, uses a private IPv4

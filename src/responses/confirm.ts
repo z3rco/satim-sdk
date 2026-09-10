@@ -2,37 +2,10 @@
  * `ConfirmResponse`: typed wrapper for `/public/acknowledgeTransaction.do`
  * (confirm), `/getOrderStatus.do`, `/refund.do`, and `/reverse.do` results.
  *
- * # Status predicate contract
- *
- * The nine predicates exposed by this class are **mutually exclusive**.
- * For any well-formed gateway response, exactly one returns `true`.
- *
- * Dependency chain (acyclic):
- *
- *     Leaves (OrderStatus comparisons):
- *       isSuccessful, isPending, isReversed, isRefunded, isPreAuthorized
- *
- *     Composites:
- *       isExpired   → leaves
- *       isCancelled → leaves, isExpired
- *       isRejected  → leaves, isExpired, isCancelled
- *       isFailed    → catch-all (true only when all eight predicates above are false)
- *
- * Adding a tenth predicate requires updating the exclusion list of every
- * predicate that comes after it in the chain. No predicate may call
- * `isFailed` — that would introduce a cycle.
- *
- * # PII redaction
- *
- * `getRawResponse()` redacts `Ip`, `Pan`, `cardholderName`, and `expiration`.
- * Typed accessors return the unredacted values; callers must request
- * cardholder data explicitly via named getters.
- *
- * # Amount verification
- *
- * `verifyAmount()` uses the {@link toMinorUnits} IEEE-754-safe pipeline
- * for comparison. `Satim.confirm()` calls it automatically on
- * `isSuccessful()` responses — there is no way for a caller to skip it.
+ * The nine status predicates are mutually exclusive: exactly one returns
+ * `true` for a well-formed response. They chain (leaves → isExpired →
+ * isCancelled → isRejected → isFailed), so a new predicate must be added
+ * to the exclusion checks of every predicate after it.
  * @file
  */
 
@@ -42,23 +15,17 @@ import { toMinorUnits, isWholeMinorUnits } from "../money.js";
 import { validateConfirmSchema } from "./schema.js";
 
 /**
- * Accepted shape for a gateway minor-unit amount.
- *
- * Minor units are integral by definition, so the digits are required.
- * A trailing `.0`/`.00` is tolerated because gateways routinely serialise
- * integers through a decimal formatter — rejecting `"5000.00"` would
- * throw on a perfectly good successful payment and leave it unfulfilled.
- * Any other fraction (`"5000.5"`) is still rejected: a real sub-centime
- * amount means the response is malformed and must not be silently rounded.
+ * Accepted shape for a gateway minor-unit amount. A trailing `.0`/`.00` is
+ * tolerated because gateways routinely serialise integers through a
+ * decimal formatter — rejecting `"5000.00"` would throw on a valid
+ * successful payment. Any other fraction (`"5000.5"`) is still rejected
+ * as malformed rather than silently rounded.
  */
 const MINOR_UNIT_PATTERN = /^\d+(?:\.0+)?$/;
 
 /**
- * Immutable wrapper around an order-management response.
- *
- * Invariants:
- * - `_raw` is a deep clone validated and normalised at construction.
- * - No mutator methods are exposed; the wrapper cannot affect SDK state.
+ * Immutable wrapper around an order-management response. `_raw` is a deep
+ * clone validated and normalised at construction; no mutators are exposed.
  */
 export class ConfirmResponse {
     private readonly _raw: ConfirmOrderResponse;
@@ -74,8 +41,8 @@ export class ConfirmResponse {
     }
 
     // ─── PII-bearing accessors ───────────────────────────────────────────
-    // Each returns the unredacted gateway value. Callers must request these
-    // explicitly — the raw-response accessor below redacts them.
+    // Unredacted gateway values. getRawResponse() redacts these; these
+    // named getters are the only way to read them.
 
     /** @returns Cardholder IP address as reported by the gateway, or `undefined`. */
     public getIpAddress(): string | undefined { return this._raw.Ip; }
@@ -93,22 +60,18 @@ export class ConfirmResponse {
     }
 
     /**
-     * Captured amount in major units (e.g. DA). Returns `undefined` when the
-     * gateway value is absent, non-numeric, fractional, or exceeds
-     * `Number.MAX_SAFE_INTEGER` — these cases indicate a malformed response
-     * that should not be silently coerced. Callers needing strictness should
-     * also call {@link verifyAmount}.
+     * Captured amount in major units (e.g. DA). Returns `undefined` when
+     * the gateway value is absent, non-numeric, fractional, or exceeds
+     * `Number.MAX_SAFE_INTEGER` rather than silently coercing it. Callers
+     * needing strictness should also call {@link verifyAmount}.
      */
     public getAmount(): number | undefined {
         return parseMinorField(this._raw.Amount ?? this._raw.amount);
     }
 
     /**
-     * Actually-debited amount in major units.
-     *
-     * For standard captures, equals {@link getAmount}. For partial captures
-     * (pre-auth flows), may be less than the original hold.
-     *
+     * Actually-debited amount in major units. Equals {@link getAmount} for
+     * standard captures; may be less for partial captures (pre-auth flows).
      * Same null-vs-malformed semantics as {@link getAmount}.
      */
     public getDepositAmount(): number | undefined {
@@ -129,9 +92,8 @@ export class ConfirmResponse {
     public isPreAuthorized(): boolean { return this._raw.OrderStatus === "1"; }
 
     // ─── Composite predicates ────────────────────────────────────────────
-    // Each early-returns `false` when any earlier predicate in the chain
-    // is `true`. Reads like a series of `if-else` even though it's spread
-    // across methods — the contract above enumerates the order.
+    // Each early-returns `false` when an earlier predicate in the chain is
+    // `true` — see the mutual-exclusivity note in the file header.
 
     /** Session timed out (`actionCode === "-2007"`), only when no terminal OrderStatus is present. */
     public isExpired(): boolean {
@@ -160,11 +122,7 @@ export class ConfirmResponse {
         return this._raw.ErrorMessage?.toLowerCase().includes("payment is declined") ?? false;
     }
 
-    /**
-     * Catch-all failure predicate — `true` iff every other predicate is `false`.
-     * Mutual-exclusivity contract enforcement point: any response that does
-     * not fit a narrower predicate lands here.
-     */
+    /** Catch-all: `true` iff every other predicate is `false`. */
     public isFailed(): boolean {
         if (this.hasTerminalOrderStatus()) return false;
         return !this.isExpired() && !this.isCancelled() && !this.isRejected();
@@ -177,10 +135,9 @@ export class ConfirmResponse {
     }
 
     /**
-     * True iff any of: `ErrorCode != "0" && != undefined`, `params`
-     * present, or `actionCode` present. Used by `isCancelled` and
-     * `isRejected` to distinguish "real error response" from "absent
-     * response with no diagnostic fields".
+     * True iff `ErrorCode` is a real error, or `params`/`actionCode` is
+     * present. Distinguishes an actual error response from one with no
+     * diagnostic fields.
      */
     private hasErrorSignal(): boolean {
         const code = this._raw.ErrorCode;
@@ -195,9 +152,6 @@ export class ConfirmResponse {
     /**
      * Localised success/info message. Falls back to {@link getErrorMessage}
      * for non-success terminal states.
-     *
-     * Source order on success: `params.respCode_desc`, then
-     * `actionCodeDescription`, then a fixed English fallback.
      */
     public getSuccessMessage(): string {
         if (this.isSuccessful()) {
@@ -211,12 +165,9 @@ export class ConfirmResponse {
     }
 
     /**
-     * Localised failure message keyed to the active predicate.
-     *
-     * For declined payments, the message is the SDK's generic
-     * `"Your transaction was rejected"` rather than the gateway's specific
-     * `respCode_desc` (e.g. `"Do not honor"`). Callers needing the raw
-     * gateway reason should read it from {@link getRawResponse}.
+     * Localised failure message keyed to the active predicate. Declined
+     * payments get the generic `"Your transaction was rejected"` rather
+     * than the gateway's specific reason; read {@link getRawResponse} for that.
      */
     public getErrorMessage(): string {
         if (this.isExpired()) return "Payment session expired";
@@ -233,15 +184,10 @@ export class ConfirmResponse {
     // ─── Amount verification ─────────────────────────────────────────────
 
     /**
-     * Assert captured amount equals `expectedAmount`. Compares minor-unit
-     * integers via the same IEEE-754-safe {@link toMinorUnits} pipeline
-     * used at registration.
-     *
-     * Sole defence against partial-capture manipulation. `Satim.confirm()`
-     * calls this automatically on `isSuccessful()` responses — bypassing
-     * requires constructing `ConfirmResponse` directly, which also
-     * bypasses the gateway call entirely.
-     *
+     * Assert captured amount equals `expectedAmount`, comparing minor-unit
+     * integers via {@link toMinorUnits}. This is the SDK's sole defence
+     * against partial-capture manipulation; `Satim.confirm()` calls it
+     * automatically on `isSuccessful()` responses.
      * @throws {@link SatimUnexpectedResponseError} when the gateway amount
      *         is absent, non-numeric, fractional, or mismatches.
      */
@@ -267,14 +213,9 @@ export class ConfirmResponse {
     }
 
     /**
-     * Shallow copy of the raw gateway response with cardholder PII redacted.
-     *
-     * Redacted fields: `Ip`, `Pan`, `cardholderName`, `expiration`.
-     *
-     * Use for debugging, logging, error reporting. Mutating the returned
-     * object does not affect this wrapper. For PII access, call the
-     * dedicated `getCardPan` / `getCardHolderName` / `getCardExpiry` /
-     * `getIpAddress` methods.
+     * Shallow copy of the raw gateway response with cardholder PII
+     * (`Ip`, `Pan`, `cardholderName`, `expiration`) redacted. Use for
+     * debugging/logging; for PII, call the dedicated getters instead.
      */
     public getRawResponse(): Record<string, unknown> {
         const copy: Record<string, unknown> = { ...this._raw };
@@ -286,10 +227,7 @@ export class ConfirmResponse {
     }
 }
 
-/**
- * Parse a gateway minor-unit field into a major-unit number, or `undefined`
- * for absent / non-numeric / fractional / oversize input.
- */
+/** Parse a gateway minor-unit field into a major-unit number, or `undefined` for absent/non-numeric/fractional/oversize input. */
 function parseMinorField(raw: number | string | undefined): number | undefined {
     if (raw === undefined) return undefined;
     const str = String(raw).trim();

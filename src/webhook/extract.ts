@@ -1,18 +1,11 @@
 /**
- * Order-ID extraction from heterogeneous webhook source types.
+ * Order-ID extraction from heterogeneous webhook source types: a bare
+ * string, a URL string, a `Request`-like object, or a plain object with
+ * an `orderId` property.
  *
- * SATIM callbacks arrive in different shapes depending on how the
- * merchant's framework parses them:
- * - A bare `orderId` string.
- * - A URL string with `?orderId=…`.
- * - A Web API `Request` whose `.url` contains `?orderId=…`.
- * - A plain object with an `orderId` property (parsed JSON body, query map).
- *
- * `extractOrderId` accepts all four and returns a validated, trimmed
- * string — or `null` if the input does not yield a syntactically valid
- * order ID. The strict format match (`[a-zA-Z0-9\-]{1,128}`) defends
- * against orderIds containing URL-, log-, or SQL-meaningful characters
- * that could be abused downstream.
+ * Returns a validated, trimmed string, or `null` if nothing yields a
+ * syntactically valid ID (`[a-zA-Z0-9\-]{1,128}`) — this format guard
+ * blocks orderIds carrying URL-, log-, or SQL-meaningful characters.
  * @file
  */
 
@@ -21,12 +14,9 @@ const ORDER_ID_PATTERN = /^[a-zA-Z0-9\-]{1,128}$/;
 
 /**
  * Extract and validate an orderId from any accepted source type. Returns
- * a string matching {@link ORDER_ID_PATTERN}, or `null` on null/undefined
- * input, no extraction strategy succeeding, or format check failing.
- *
- * Returning `null` for malformed inputs guarantees downstream
- * `satim.confirm(orderId, …)` never sees an orderId that could carry
- * injection payloads through to the gateway.
+ * a string matching {@link ORDER_ID_PATTERN}, or `null` — which
+ * guarantees `satim.confirm()` never receives an orderId that could
+ * carry an injection payload.
  */
 export function extractOrderId(source: unknown): string | null {
     if (source === null || source === undefined) return null;
@@ -37,11 +27,9 @@ export function extractOrderId(source: unknown): string | null {
 }
 
 /**
- * Strategy 1: string source.
- *
- * Strings that look like URLs (contain `://` or start with `?`) are parsed
- * and `orderId` is extracted from the query string. Other strings are
- * returned verbatim for the final format check.
+ * Strategy 1: string source. URL-like strings (`://` or leading `?`) are
+ * parsed and `orderId` read from the query string; other strings pass
+ * through verbatim.
  */
 function fromString(source: unknown): string | undefined {
     if (typeof source !== "string") return undefined;
@@ -55,10 +43,8 @@ function fromString(source: unknown): string | undefined {
 }
 
 /**
- * Strategy 2: Web API `Request`-like object source.
- *
- * Probes for a `url` property; ignores `method` and `body` (the handler
- * does not consume the body — orderId comes from the URL only).
+ * Strategy 2: `Request`-like object. Reads `orderId` from the `url`
+ * property's query string; `method`/`body` are ignored.
  */
 function fromRequest(source: unknown): string | undefined {
     if (typeof source !== "object" || source === null || !("url" in source)) return undefined;
@@ -73,11 +59,7 @@ function fromRequest(source: unknown): string | undefined {
 
 /**
  * Strategy 3: plain object with an `orderId` property (parsed JSON body
- * or query-string map).
- *
- * Accepts `string` and `number` values for `orderId` (gateways
- * occasionally serialise it as a number); coerces numbers to string for
- * the format check.
+ * or query map). Accepts `string` or `number`, coercing numbers.
  */
 function fromObject(source: unknown): string | undefined {
     if (typeof source !== "object" || source === null) return undefined;
