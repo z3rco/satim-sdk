@@ -12,6 +12,7 @@ export function buildSignedString(params: Record<string, string>): string {
         .join("");
 }
 
+// sha256Bytes, not sha256Hex: the HMAC blocks are raw bytes and UTF-8-encoding them would corrupt anything above 0x7F.
 function hmacSha256Hex(secret: string, message: string): string {
     const BLOCK = 64;
     let key: Uint8Array = encoder.encode(secret);
@@ -43,6 +44,7 @@ function hexToBytes(hex: string): Uint8Array {
     return out;
 }
 
+// Constant-time so a mismatch leaks no timing.
 function timingSafeEqual(a: string, b: string): boolean {
     if (a.length !== b.length) return false;
     let diff = 0;
@@ -50,6 +52,7 @@ function timingSafeEqual(a: string, b: string): boolean {
     return diff === 0;
 }
 
+// Proves origin only; a replay carries a valid signature, so the handler still re-fetches live state.
 export function verifyCallbackChecksum(params: Record<string, string>, secret: string): boolean {
     const provided = params.checksum;
     if (!provided || !secret) return false;

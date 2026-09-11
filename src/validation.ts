@@ -2,6 +2,7 @@ import { SatimInvalidArgumentError } from "./exceptions.js";
 import { MAX_SAFE_AMOUNT, toMinorUnits, hasSubCentimePrecision } from "./money.js";
 import type { Language } from "./types.js";
 
+// Rejected to block terminal-ID injection (force_terminal_id) and prototype pollution.
 const RESERVED_JSON_KEYS = new Set([
     "force_terminal_id", "__proto__", "constructor", "prototype",
 ]);

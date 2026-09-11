@@ -16,6 +16,7 @@ function sanitizeGatewayMessage(msg: string): string {
     return msg.replace(NON_PRINTABLE, "").slice(0, 200);
 }
 
+// Match by name, not instanceof DOMException: a custom fetch may reject a timeout with a plain Error.
 function isAbortError(error: unknown): boolean {
     if (typeof error !== "object" || error === null) return false;
     const name = (error as { name?: unknown }).name;
@@ -99,6 +100,7 @@ export class HttpClientService {
                 .then(result => { this.validateApiResponse(result, endpoint); return result; });
         }
 
+        // Hash the body, not the raw form: it carries the merchant password.
         const key = `${endpoint}:${sha256Hex(this.buildBody(data))}`;
         const existing = this._inflight.get(key) as Promise<T> | undefined;
         if (existing) return existing;
@@ -127,6 +129,7 @@ export class HttpClientService {
             || err.errorCategory === "network";
     }
 
+    // 4xx is a client-side fault, not gateway degradation, so it must not open the breaker.
     private countsAsGatewayFailure(err: SatimUnexpectedResponseError): boolean {
         if (err.errorCategory === "circuit_open") return false;
         if (err.httpStatus !== undefined) return err.httpStatus >= 500;
@@ -169,6 +172,7 @@ export class HttpClientService {
         retryable: boolean,
     ): Promise<T> {
 
+        // Before the breaker gate: a config fault must not consume the single HALF_OPEN probe.
         this.assertTlsSafe();
 
         if (this.circuitBreaker && !this.circuitBreaker.allowRequest()) {
@@ -206,6 +210,7 @@ export class HttpClientService {
 
                 if (!response.ok) {
 
+                    // acknowledgeTransaction.do reports bad creds as 401, register.do as errorCode 5; type both the same.
                     if (response.status === 401 || response.status === 403) {
                         throw new SatimInvalidCredentialsError(
                             "Invalid username or password or terminal ID",
@@ -232,6 +237,7 @@ export class HttpClientService {
                 return parsed;
             } catch (error) {
 
+                // Local guards (e.g. the TLS check) propagate untouched; only transport errors reach the breaker.
                 if (error instanceof SatimError && !(error instanceof SatimUnexpectedResponseError)) {
                     throw error;
                 }
@@ -258,7 +264,7 @@ export class HttpClientService {
             "Unknown error";
 
         if (code === "5") {
-
+            // errorCode 5 on a gated endpoint is ambiguous: wrong credentials, or terminal not entitled.
             throw new SatimInvalidCredentialsError(
                 PERMISSION_GATED.some((e) => endpoint.includes(e))
                     ? "Access denied. Either the credentials are wrong, or this operation is not "

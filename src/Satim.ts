@@ -144,6 +144,7 @@ export class Satim extends SatimConfig {
             "/deposit.do",
             {
                 userName: this.username, password: this.password, orderId,
+                // BPC reads amount 0 as "capture the full order".
                 amount: amount === undefined ? 0 : toMinorUnits(amount),
                 currency: this._currency, language: this._language,
             },
@@ -187,6 +188,7 @@ export class Satim extends SatimConfig {
                 return "available" as const;
             } catch (err) {
 
+                // errorCode 6 (unknown order) means the call was accepted — the operation is open to us.
                 if (err instanceof SatimInvalidArgumentError) return "available" as const;
                 if (err instanceof SatimGatewayError) return "available" as const;
                 if (err instanceof SatimInvalidCredentialsError) return "denied" as const;
@@ -267,6 +269,7 @@ export class Satim extends SatimConfig {
             returnUrl: this._returnUrl,
             failUrl: this._failUrl ?? this._returnUrl,
             language: this._language,
+            // force_terminal_id is stripped from caller fields and set from the credential store: no terminal-ID injection.
             jsonParams: JSON.stringify({ ...safeUserFields, [FORCE_TERMINAL_KEY]: this.terminalId }),
         };
         if (this._description !== undefined) data.description = this._description;
@@ -281,6 +284,7 @@ export class Satim extends SatimConfig {
         const orderNumber = this.getFinalOrderNumber();
         const data = this.buildData(orderNumber);
 
+        // Retry registration only with an idempotency key, else a retry could duplicate the order.
         const retryable = this._idempotencyKey !== undefined;
         const result = await this.httpClientService.handleApiRequest<RegisterOrderResponse>(
             endpoint, data, { retryable },
@@ -303,6 +307,7 @@ export class Satim extends SatimConfig {
                 ? await configured.registerPreAuth()
                 : await configured.register();
         } catch (err) {
+            // Gateway "duplicate order" -> typed error so callers recover via status(originalOrderId).
             if (err instanceof SatimGatewayError && err.errorCode === "1") {
                 throw new SatimDuplicateOrderError(merchantRef);
             }

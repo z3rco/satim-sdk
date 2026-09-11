@@ -13,6 +13,7 @@ export class CircuitBreaker {
     private openedAt: number | null = null;
     private probeInFlight = false;
 
+    // Cleared only by onSuccess/onFailure; the abandonment check below stops one unreported probe wedging the breaker forever.
     private probeStartedAt: number | null = null;
     private readonly failureThreshold: number;
     private readonly resetTimeoutMs: number;
@@ -31,6 +32,7 @@ export class CircuitBreaker {
             }
             return false;
         }
+        // Admit a fresh probe if the last was never reported (caller crashed mid-probe).
         if (this.probeInFlight && !this.isProbeAbandoned()) return false;
         this.startProbe();
         return true;

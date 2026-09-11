@@ -21,6 +21,7 @@ export function deriveIdempotencyKey(params: {
     return `dk_${sha256Hex(input)}`;
 }
 
+// base-36 over 36^10 keeps derived order numbers collision-free for a merchant's lifetime; the old 10-digit space collided at ~21k refs.
 export function deriveOrderNumber(
     merchantRef: string,
     currency: string = "012",

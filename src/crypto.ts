@@ -1,3 +1,5 @@
+// In-tree SHA-256 (FIPS 180-4): no node:crypto import, so the package loads on edge runtimes.
+// Round constants (cube roots of the first 64 primes).
 const K = new Uint32Array([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -19,6 +21,7 @@ export function sha256Hex(input: string): string {
     return sha256Bytes(encoder.encode(input));
 }
 
+// Raw-byte digest; sha256Hex UTF-8-encodes its input, which HMAC must not do to its blocks.
 export function sha256Bytes(bytes: Uint8Array): string {
     const bitLen = bytes.length * 8;
 
@@ -75,6 +78,7 @@ const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 export const ORDER_NUMBER_LENGTH = 10;
 
+// 36 * 7: bytes >= this are rejected so `byte % 36` stays uniform.
 const REJECTION_BOUND = 252;
 
 export function randomOrderNumber(): string {

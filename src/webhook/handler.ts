@@ -108,6 +108,7 @@ export class WebhookHandler {
             if (!params || !verifyCallbackChecksum(params, this.callbackSecret)) {
                 return { verified: false, reason: "bad_signature" };
             }
+        // Gateway is signing but nobody configured a secret: warn once rather than ignore silently.
         } else if (params?.checksum && !this.warnedAboutUncheckedSignature) {
 
             this.warnedAboutUncheckedSignature = true;
@@ -119,6 +120,7 @@ export class WebhookHandler {
             );
         }
 
+        // Rate-limit after the signature check, so forged traffic can't exhaust the window.
         if (!this.rateLimiter.check()) return { verified: false, reason: "rate_limited" };
 
         const existing = this.inflightLocks.get(orderId);
@@ -151,6 +153,7 @@ export class WebhookHandler {
 
         if (expectedAmount === undefined || expectedAmount === null) return null;
 
+        // Replays re-read with status(); confirm() would re-fire the mutating acknowledgement.
         const response = isDuplicate
             ? await this.satim.status(orderId)
             : await this.satim.confirm(orderId, expectedAmount);
@@ -161,6 +164,7 @@ export class WebhookHandler {
         return { orderId, response, duplicate: isDuplicate };
     }
 
+    // Mark only truly final states: marking a pre-auth or declined order drops its later success as a duplicate.
     private static isTerminal(response: ConfirmResponse): boolean {
         return response.isSuccessful() || response.isRefunded() || response.isReversed();
     }

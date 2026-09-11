@@ -9,6 +9,7 @@ import {
 
 interface Creds { username: string; password: string; terminalId: string; }
 
+// Credentials live here, off the instance, so Object.keys / JSON.stringify / inspect never expose them.
 const _credentials = new WeakMap<SatimConfig, Creds>();
 
 const CURRENCIES: Record<string, CurrencyCode> = { DZD: "012", USD: "840", EUR: "978" };
@@ -57,6 +58,7 @@ export class SatimConfig {
         _credentials.set(this, { username, password, terminalId });
     }
 
+    // Every setter clones, so a shared base instance can't leak state across concurrent requests.
     protected clone(): this {
         const c = Object.create(Object.getPrototypeOf(this)) as this;
         c.testMode = this.testMode;
@@ -138,6 +140,7 @@ export class SatimConfig {
         const c = this.clone(); c._sessionTimeoutSecs = seconds; return c;
     }
 
+    // Dev-only escape hatch for the SSRF guard; call before the URL setters.
     public allowPrivateUrls(enabled: boolean): this {
         const c = this.clone(); c._allowPrivateUrls = enabled === true; return c;
     }

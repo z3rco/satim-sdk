@@ -1,5 +1,7 @@
+// Gateway callbacks name the order `mdOrder`, not `orderId`; accept both, orderId first.
 const ORDER_KEYS = ["orderId", "mdOrder"] as const;
 
+// Strict format: keeps injection payloads out of satim.confirm().
 const ORDER_ID_PATTERN = /^[a-zA-Z0-9\-]{1,128}$/;
 
 export function extractOrderId(source: unknown): string | null {

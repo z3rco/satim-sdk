@@ -27,6 +27,7 @@ export function validateConfirmSchema(raw: unknown): asserts raw is ConfirmOrder
     coerceNumericString(raw, "actionCode");
 }
 
+// The gateway sends these numeric-looking fields as a JSON number on some endpoints, a string on others.
 function coerceNumericString(raw: Record<string, unknown>, field: string): void {
     const v = raw[field];
     if (v === undefined) return;

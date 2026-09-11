@@ -38,6 +38,7 @@ const PRIVATE_IPV6 = [
     /^::$/i,
 ];
 
+// Reject decimal/octal/hex IP encodings that smuggle a private address past the checks below.
 function isNonStandardIp(host: string): boolean {
     return /^\d{4,}$/.test(host)
         || /^0\d+(\.0?\d+)*$/.test(host)
@@ -82,6 +83,7 @@ export function assertSafeUrl(urlStr: string, errorPrefix: string, allowPrivate 
     if (isNonStandardIp(host)) {
         throw new SatimInvalidArgumentError(`${errorPrefix} Non-standard IP address encodings are not allowed.`);
     }
+    // allowPrivateUrls skips only the private-range checks, never the encoding check above.
     if (allowPrivate) return;
 
     if (BLOCKED_HOSTNAMES.has(host)) {

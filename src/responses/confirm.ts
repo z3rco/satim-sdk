@@ -3,6 +3,7 @@ import type { ConfirmOrderResponse } from "../types.js";
 import { toMinorUnits, isWholeMinorUnits } from "../money.js";
 import { validateConfirmSchema } from "./schema.js";
 
+// Tolerate a trailing .0/.00: gateways serialise integer minor units through a decimal formatter.
 const MINOR_UNIT_PATTERN = /^\d+(?:\.0+)?$/;
 
 export class ConfirmResponse {
@@ -40,6 +41,7 @@ export class ConfirmResponse {
     public isRefunded(): boolean { return this._raw.OrderStatus === "4"; }
 
     public isPending(): boolean {
+        // 5 = 3-D Secure in flight, 7 = pending payment; still in motion, never failures.
         const s = this._raw.OrderStatus;
         return s === "0" || s === "5" || s === "7";
     }
@@ -59,6 +61,7 @@ export class ConfirmResponse {
         if (this.hasKnownOrderStatus() || this.isExpired()) return false;
         if (!this.hasErrorSignal()) return false;
         if (this._raw.actionCode === "10") return true;
+        // English-only fallback; the SDK defaults to FR, so actionCode is authoritative.
         return this._raw.ErrorMessage?.toLowerCase().includes("payment is cancelled") ?? false;
     }
 
