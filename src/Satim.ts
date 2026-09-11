@@ -86,10 +86,19 @@ export class Satim extends SatimConfig {
             { retryable: false },
         );
         const response = new ConfirmResponse(result);
-        if (response.isSuccessful()) response.verifyAmount(expectedAmount);
+        if (response.isSuccessful()) {
+            response.verifyAmount(expectedAmount);
+            // Defence in depth (mainly against a caller-supplied hostile baseUrl): the settled currency must match what we registered under.
+            if (result.currency !== undefined && String(result.currency) !== this._currency) {
+                throw new SatimUnexpectedResponseError(
+                    `payment currency mismatch. Expected ${this._currency}, got ${String(result.currency)}`, "gateway",
+                );
+            }
+        }
         return response;
     }
 
+    // Unlike confirm(), this does not verify the amount — call verifyAmount() yourself if acting on the result.
     public async status(orderId: string): Promise<ConfirmResponse> {
         assertOrderId(orderId, "status check");
         const result = await this.httpClientService.handleApiRequest<ConfirmOrderResponse>(

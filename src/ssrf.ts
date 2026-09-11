@@ -13,6 +13,10 @@ const PRIVATE_IPV4 = [
     /^192\.168\./,
     /^169\.254\./,
     /^0\./,
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT (RFC 6598); includes cloud metadata 100.100.100.200
+    /^198\.1[89]\./,                              // benchmarking (RFC 2544)
+    /^(22[4-9]|23\d)\./,                          // multicast 224.0.0.0/4
+    /^(24\d|25[0-5])\./,                          // reserved/broadcast 240.0.0.0/4
 ];
 
 const PRIVATE_IPV6 = [
@@ -36,7 +40,14 @@ const PRIVATE_IPV6 = [
     /^f[cd]/i,
     /^fe[89ab]/i,
     /^::$/i,
+    /^2002:/i,        // 6to4 (RFC 3056), embeds an IPv4 address
+    /^2001:0{1,4}:/i, // Teredo 2001:0000::/32
 ];
+
+// Lowercase and strip one trailing dot: `localhost.` resolves to localhost but slips a literal blocklist match.
+function normalizeHost(hostname: string): string {
+    return hostname.toLowerCase().replace(/\.$/, "");
+}
 
 // Reject decimal/octal/hex IP encodings that smuggle a private address past the checks below.
 function isNonStandardIp(host: string): boolean {
@@ -59,7 +70,7 @@ const MAX_CACHE = 512;
 const cache = new Set<string>();
 
 export function isPrivateHost(hostname: string): boolean {
-    const host = hostname.toLowerCase();
+    const host = normalizeHost(hostname);
     if (BLOCKED_HOSTNAMES.has(host)) return true;
     if (PRIVATE_IPV4.some((p) => p.test(host))) return true;
     const v6 = normalizeIpv6(host);
@@ -78,7 +89,7 @@ export function assertSafeUrl(urlStr: string, errorPrefix: string, allowPrivate 
         throw new SatimInvalidArgumentError(errorPrefix);
     }
 
-    const host = parsed.hostname.toLowerCase();
+    const host = normalizeHost(parsed.hostname);
 
     if (isNonStandardIp(host)) {
         throw new SatimInvalidArgumentError(`${errorPrefix} Non-standard IP address encodings are not allowed.`);

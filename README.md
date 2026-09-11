@@ -180,6 +180,10 @@ re-fetches authoritative state from the gateway on every invocation.
 
 ```typescript
 const handler = satim.createWebhookHandler({
+  // If your merchant profile signs callbacks, pass the shared secret from
+  // your bank; otherwise you must opt in explicitly with
+  // allowUnverifiedCallbacks: true. One of the two is required.
+  callbackSecret: process.env.SATIM_CALLBACK_SECRET,
   // Your source of truth for what this order should cost.
   onResolveAmount: (orderId) => db.orders.findByGatewayId(orderId)?.totalDZD,
   // Multi-instance deployments must make these atomic (Redis SETNX,
@@ -195,7 +199,7 @@ app.post('/satim/callback', async (req, res) => {
     // Each reason needs a different answer. Returning 200 for
     // `rate_limited` tells SATIM the callback was handled and it will
     // never redeliver — a silently lost payment notification.
-    const status = { invalid_source: 400, unknown_order: 404, rate_limited: 429 }[outcome.reason];
+    const status = { invalid_source: 400, bad_signature: 400, unknown_order: 404, rate_limited: 429 }[outcome.reason];
     return res.sendStatus(status);
   }
 

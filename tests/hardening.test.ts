@@ -167,7 +167,7 @@ describe("WebhookHandler — multi-instance warning", () => {
     const makeSatim = () => new Satim({ username: "u", password: "p", terminalId: "t" });
 
     test("emits console.warn when no persistence hooks are provided", () => {
-        new WebhookHandler(makeSatim(), {
+        new WebhookHandler(makeSatim(), { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 100,
         });
         expect(warnSpy).toHaveBeenCalledOnce();
@@ -175,7 +175,7 @@ describe("WebhookHandler — multi-instance warning", () => {
     });
 
     test("does not warn when onCheckDuplicate is provided", () => {
-        new WebhookHandler(makeSatim(), {
+        new WebhookHandler(makeSatim(), { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 100,
             onCheckDuplicate: async () => false,
         });
@@ -183,7 +183,7 @@ describe("WebhookHandler — multi-instance warning", () => {
     });
 
     test("does not warn when onMarkProcessed is provided", () => {
-        new WebhookHandler(makeSatim(), {
+        new WebhookHandler(makeSatim(), { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 100,
             onMarkProcessed: async () => {},
         });
@@ -191,7 +191,7 @@ describe("WebhookHandler — multi-instance warning", () => {
     });
 
     test("does not warn when suppressMultiInstanceWarning is true", () => {
-        new WebhookHandler(makeSatim(), {
+        new WebhookHandler(makeSatim(), { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 100,
             suppressMultiInstanceWarning: true,
         });
@@ -200,7 +200,7 @@ describe("WebhookHandler — multi-instance warning", () => {
 
     test("does not warn when both persistence hooks are provided", () => {
         const processed = new Set<string>();
-        new WebhookHandler(makeSatim(), {
+        new WebhookHandler(makeSatim(), { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 100,
             onCheckDuplicate: (id) => processed.has(id),
             onMarkProcessed: (id) => { processed.add(id); },

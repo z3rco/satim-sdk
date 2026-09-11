@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Security
+
+- **Webhook handler now requires an explicit choice about unsigned callbacks.** Pass `callbackSecret` to verify signed callbacks, or `allowUnverifiedCallbacks: true` to accept unsigned ones (guarded only by live re-fetch and amount verification). Constructing a handler with neither now throws — a breaking change made deliberately so the insecure mode is never the silent default.
+- **Closed a callback parser differential.** `extractOrderId` took the first duplicate query value while `extractParams` took the last, so a signed callback for order B could be replayed as `?orderId=VICTIM&orderId=B`. Any callback with duplicate query keys is now rejected.
+- **`getUrl()` enforces the same HTTPS + `satim.dz` allowlist as `redirectResponse()`** — merchants redirecting from `getUrl()` no longer silently lose the open-redirect protection.
+- **SSRF guard extended:** CGNAT `100.64.0.0/10` (incl. cloud metadata `100.100.100.200`), `198.18.0.0/15`, multicast `224.0.0.0/4`, reserved `240.0.0.0/4`, trailing-dot hostnames, and IPv6 6to4/Teredo.
+- **Response body is capped at 1 MiB**, streamed, so a hostile endpoint (reachable only via a custom `baseUrl`) cannot exhaust memory.
+- **`merchantRef` is sanitized** before interpolation into `SatimDuplicateOrderError`, closing terminal/log escape-sequence injection.
+- **`confirm()` cross-checks the settled currency** against the registered one on a successful payment.
+- **In-memory duplicate set is bounded** (FIFO, 10 000 entries) so it can't grow without limit.
+- `toMinorUnits` now throws a typed `SatimInvalidArgumentError` (not a bare `Error`) and rejects a positive amount that rounds to 0 minor units.
+
 ### Fixed
 
 - **Webhook: paid orders could be left unfulfilled.** Orders were marked processed whenever the response was not `isPending()`, which wrongly covered pre-authorized holds and declined attempts. A pre-auth capture, or a customer's successful card retry after a decline, then arrived as `duplicate: true` and callers were told not to fulfil it. Marking now requires a terminal `OrderStatus` — deposited, refunded, or reversed.

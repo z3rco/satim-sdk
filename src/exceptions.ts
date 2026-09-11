@@ -48,11 +48,15 @@ export class SatimGatewayError extends SatimError {
     }
 }
 
+function sanitizeForMessage(value: string): string {
+    return String(value).replace(/[^\x20-\x7E]/g, "").slice(0, 200);
+}
+
 export class SatimDuplicateOrderError extends SatimError {
 
     constructor(public readonly merchantRef: string) {
         super(
-            `Order for merchant reference "${merchantRef}" was already registered. ` +
+            `Order for merchant reference "${sanitizeForMessage(merchantRef)}" was already registered. ` +
             `Use status() with the original orderId to check its state.`,
         );
     }

@@ -25,12 +25,12 @@ function failedResponse() {
 describe("WebhookHandler - creation", () => {
     test("requires onResolveAmount", () => {
         const satim = makeSatim();
-        expect(() => satim.createWebhookHandler({} as any)).toThrow(SatimMissingDataError);
+        expect(() => satim.createWebhookHandler({ allowUnverifiedCallbacks: true,} as any)).toThrow(SatimMissingDataError);
     });
 
     test("creates handler with valid options", () => {
         const satim = makeSatim();
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
         expect(handler).toBeInstanceOf(WebhookHandler);
@@ -38,11 +38,11 @@ describe("WebhookHandler - creation", () => {
 
     test("rejects invalid maxCallbacksPerWindow", () => {
         const satim = makeSatim();
-        expect(() => satim.createWebhookHandler({
+        expect(() => satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             maxCallbacksPerWindow: 0,
         })).toThrow(SatimInvalidArgumentError);
-        expect(() => satim.createWebhookHandler({
+        expect(() => satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             maxCallbacksPerWindow: 1.5,
         })).toThrow(SatimInvalidArgumentError);
@@ -50,7 +50,7 @@ describe("WebhookHandler - creation", () => {
 
     test("rejects invalid rateLimitWindowMs", () => {
         const satim = makeSatim();
-        expect(() => satim.createWebhookHandler({
+        expect(() => satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             rateLimitWindowMs: 500,
         })).toThrow(SatimInvalidArgumentError);
@@ -63,7 +63,7 @@ describe("WebhookHandler - orderId extraction", () => {
 
     beforeEach(() => {
         mockRequest.mockClear();
-        handler = makeSatim(mockRequest).createWebhookHandler({
+        handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
     });
@@ -116,7 +116,7 @@ describe("WebhookHandler - orderId extraction", () => {
 describe("WebhookHandler - server-side verification", () => {
     test("calls confirm() with resolved amount", async () => {
         const mockRequest = vi.fn(async () => successResponse("150000"));
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
 
@@ -134,7 +134,7 @@ describe("WebhookHandler - server-side verification", () => {
 
     test("returns null when onResolveAmount returns undefined", async () => {
         const mockRequest = vi.fn(async () => successResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => undefined,
         });
 
@@ -145,7 +145,7 @@ describe("WebhookHandler - server-side verification", () => {
 
     test("returns null when onResolveAmount returns null", async () => {
         const mockRequest = vi.fn(async () => successResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => null,
         });
 
@@ -155,7 +155,7 @@ describe("WebhookHandler - server-side verification", () => {
 
     test("works with async onResolveAmount", async () => {
         const mockRequest = vi.fn(async () => successResponse("50000"));
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 500,
         });
 
@@ -166,7 +166,7 @@ describe("WebhookHandler - server-side verification", () => {
 
     test("propagates failed payment status without throwing", async () => {
         const mockRequest = vi.fn(async () => failedResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
 
@@ -180,7 +180,7 @@ describe("WebhookHandler - server-side verification", () => {
 describe("WebhookHandler - duplicate rejection", () => {
     test("in-memory: flags second callback as duplicate", async () => {
         const mockRequest = vi.fn(async () => successResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
 
@@ -193,7 +193,7 @@ describe("WebhookHandler - duplicate rejection", () => {
 
     test("does not mark pending payments as processed", async () => {
         const mockRequest = vi.fn(async () => pendingResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
 
@@ -212,7 +212,7 @@ describe("WebhookHandler - duplicate rejection", () => {
         const checkDuplicate = vi.fn((id: string) => processed.has(id));
         const markProcessed = vi.fn((id: string) => { processed.add(id); });
 
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             onCheckDuplicate: checkDuplicate,
             onMarkProcessed: markProcessed,
@@ -230,7 +230,7 @@ describe("WebhookHandler - duplicate rejection", () => {
         const processed = new Set<string>();
         const mockRequest = vi.fn(async () => successResponse());
 
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             onCheckDuplicate: async (id) => processed.has(id),
             onMarkProcessed: async (id) => { processed.add(id); },
@@ -247,7 +247,7 @@ describe("WebhookHandler - duplicate rejection", () => {
 describe("WebhookHandler - rate limiting", () => {
     test("rejects callbacks after limit is reached", async () => {
         const mockRequest = vi.fn(async () => successResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
             maxCallbacksPerWindow: 3,
             rateLimitWindowMs: 60000,
@@ -266,7 +266,7 @@ describe("WebhookHandler - rate limiting", () => {
 describe("WebhookHandler - amount verification integration", () => {
     test("throws on amount mismatch for successful payment", async () => {
         const mockRequest = vi.fn(async () => successResponse("99999"));
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,  // expects 150000 minor units
         });
 
@@ -275,7 +275,7 @@ describe("WebhookHandler - amount verification integration", () => {
 
     test("does not throw on amount for failed payment", async () => {
         const mockRequest = vi.fn(async () => failedResponse());
-        const handler = makeSatim(mockRequest).createWebhookHandler({
+        const handler = makeSatim(mockRequest).createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 1500,
         });
 
@@ -315,7 +315,7 @@ describe("WebhookHandler - full integration scenario", () => {
         }));
         const satimForWebhook = makeSatim(mockConfirm);
 
-        const webhook = satimForWebhook.createWebhookHandler({
+        const webhook = satimForWebhook.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: (orderId) => db.get(orderId),
             onCheckDuplicate: (orderId) => processed.has(orderId),
             onMarkProcessed: (orderId) => { processed.add(orderId); },

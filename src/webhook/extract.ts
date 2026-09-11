@@ -12,11 +12,22 @@ export function extractOrderId(source: unknown): string | null {
     return trimmed && ORDER_ID_PATTERN.test(trimmed) ? trimmed : null;
 }
 
-function fromQuery(url: string): string | undefined {
+// Reject callbacks with duplicate query keys: two parsers disagreeing on which value wins is how a signed callback for one order gets replayed against another.
+function strictQueryParams(url: string): Record<string, string> | null {
     const params = new URL(url, "http://localhost").searchParams;
+    const out: Record<string, string> = {};
+    for (const [key, value] of params) {
+        if (key in out) return null;
+        out[key] = value;
+    }
+    return out;
+}
+
+function fromQuery(url: string): string | undefined {
+    const params = strictQueryParams(url);
+    if (!params) return undefined;
     for (const key of ORDER_KEYS) {
-        const value = params.get(key);
-        if (value) return value;
+        if (params[key]) return params[key];
     }
     return undefined;
 }
@@ -57,10 +68,8 @@ function fromObject(source: unknown): string | undefined {
 export function extractParams(source: unknown): Record<string, string> | null {
     const fromUrl = (url: string): Record<string, string> | null => {
         try {
-            const params = new URL(url, "http://localhost").searchParams;
-            const out: Record<string, string> = {};
-            for (const [key, value] of params) out[key] = value;
-            return Object.keys(out).length ? out : null;
+            const p = strictQueryParams(url);
+            return p && Object.keys(p).length ? p : null;
         } catch {
             return null;
         }

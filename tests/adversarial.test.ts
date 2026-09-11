@@ -525,7 +525,7 @@ describe("5. Race condition / async attacks on webhook", () => {
         });
 
         const processedOrders: string[] = [];
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async (orderId) => 500,
             onMarkProcessed: async (orderId) => {
                 // Simulate slow persistence
@@ -558,7 +558,7 @@ describe("5. Race condition / async attacks on webhook", () => {
     test("onCheckDuplicate throws — does verify() propagate or swallow?", async () => {
         const { satim } = makeConfirmMock();
 
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 19.99,
             onCheckDuplicate: async () => {
                 throw new Error("Database connection lost");
@@ -576,7 +576,7 @@ describe("5. Race condition / async attacks on webhook", () => {
             ErrorCode: "0",
         });
 
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 19.99,
             onMarkProcessed: async () => {
                 throw new Error("Redis write failed");
@@ -599,7 +599,7 @@ describe("5. Race condition / async attacks on webhook", () => {
             ErrorCode: "0",
         });
 
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => {
                 await new Promise((r) => setTimeout(r, 100));
                 return 19.99;
@@ -621,7 +621,7 @@ describe("5. Race condition / async attacks on webhook", () => {
 
     test("rate limiter with maxCallbacksPerWindow=0 should throw", () => {
         const satim = makeSatim();
-        expect(() => new WebhookHandler(satim as any, {
+        expect(() => new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 19.99,
             maxCallbacksPerWindow: 0,
         })).toThrow(SatimInvalidArgumentError);
@@ -629,7 +629,7 @@ describe("5. Race condition / async attacks on webhook", () => {
 
     test("rate limiter with negative window should throw", () => {
         const satim = makeSatim();
-        expect(() => new WebhookHandler(satim as any, {
+        expect(() => new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 19.99,
             rateLimitWindowMs: 500, // Less than 1000
         })).toThrow(SatimInvalidArgumentError);
@@ -637,7 +637,7 @@ describe("5. Race condition / async attacks on webhook", () => {
 
     test("rate limiter with non-integer values should throw", () => {
         const satim = makeSatim();
-        expect(() => new WebhookHandler(satim as any, {
+        expect(() => new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 19.99,
             maxCallbacksPerWindow: 10.5,
         })).toThrow(SatimInvalidArgumentError);
@@ -1305,7 +1305,7 @@ describe("11. Webhook extractOrderId attacks", () => {
         ErrorCode: "0",
     }) {
         const { satim, mockRequest } = makeConfirmMock(confirmResponse);
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 500,
         });
         return { webhook, mockRequest };
@@ -1444,7 +1444,7 @@ describe("11. Webhook extractOrderId attacks", () => {
                 ErrorCode: "0",
             })),
         };
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => null,
         });
         const result = await webhook.verify({ orderId: "unknown-order" });
@@ -1459,7 +1459,7 @@ describe("11. Webhook extractOrderId attacks", () => {
         });
 
         const processedOrders = new Set<string>();
-        const webhook = new WebhookHandler(satim as any, {
+        const webhook = new WebhookHandler(satim as any, { allowUnverifiedCallbacks: true,
             onResolveAmount: async () => 500,
             onMarkProcessed: async (orderId) => {
                 processedOrders.add(orderId);

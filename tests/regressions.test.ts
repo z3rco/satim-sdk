@@ -14,7 +14,11 @@ import {
     SatimInvalidArgumentError,
 } from "../src/exceptions";
 import { ConfirmResponse } from "../src/responses/confirm";
-import { extractOrderId } from "../src/webhook/extract";
+import { extractOrderId, extractParams } from "../src/webhook/extract";
+import { RegisterResponse } from "../src/responses/register";
+import { toMinorUnits } from "../src/money";
+import { assertSafeUrl, isPrivateHost } from "../src/ssrf";
+import { SatimDuplicateOrderError, SatimMissingDataError } from "../src/exceptions";
 import { verifyCallbackChecksum, buildSignedString } from "../src/webhook/checksum";
 
 const CREDS = { username: "u", password: "p", terminalId: "t" };
@@ -159,7 +163,7 @@ function webhookFixture(responses: any[]) {
     const marked: string[] = [];
     const processed = new Set<string>();
     const satim = stubbedSatim(() => Promise.resolve(queue.shift()));
-    const handler = satim.createWebhookHandler({
+    const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
         onResolveAmount: () => 100,
         onCheckDuplicate: (id) => processed.has(id),
         onMarkProcessed: (id) => { processed.add(id); marked.push(id); },
@@ -227,7 +231,7 @@ describe("webhook marks only definitively terminal orders", () => {
             return Promise.resolve({ OrderStatus: "2", Amount: 10000 });
         });
         const processed = new Set<string>();
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 100,
             onCheckDuplicate: (id) => processed.has(id),
             onMarkProcessed: (id) => { processed.add(id); },
@@ -242,7 +246,7 @@ describe("webhook marks only definitively terminal orders", () => {
 
     test("the replay path still verifies the amount", async () => {
         const satim = stubbedSatim(() => Promise.resolve({ OrderStatus: "2", Amount: 999999 }));
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 100,
             onCheckDuplicate: () => true, // already processed → status() path
             onMarkProcessed: () => {},
@@ -254,7 +258,7 @@ describe("webhook marks only definitively terminal orders", () => {
 describe("webhook rejections are distinguishable", () => {
     function handlerWithLimit(max: number) {
         const satim = stubbedSatim(() => Promise.resolve({ OrderStatus: "2", Amount: 10000 }));
-        return satim.createWebhookHandler({
+        return satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: (id) => (id === "KNOWN" ? 100 : undefined),
             onCheckDuplicate: () => false,
             onMarkProcessed: () => {},
@@ -669,7 +673,7 @@ describe("the gateway's real callback format", () => {
         (satim as any).httpClientService = {
             handleApiRequest: () => { gatewayCalls++; return Promise.resolve({ OrderStatus: "2", Amount: 10000 }); },
         };
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 100,
             callbackSecret: "shared-secret",
             suppressMultiInstanceWarning: true,
@@ -688,7 +692,7 @@ describe("the gateway's real callback format", () => {
         (satim as any).httpClientService = {
             handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000 }),
         };
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 100,
             callbackSecret: "shared-secret",
             suppressMultiInstanceWarning: true,
@@ -708,7 +712,7 @@ describe("the gateway's real callback format", () => {
         (satim as any).httpClientService = {
             handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000 }),
         };
-        const handler = satim.createWebhookHandler({
+        const handler = satim.createWebhookHandler({ allowUnverifiedCallbacks: true,
             onResolveAmount: () => 100,
             suppressMultiInstanceWarning: true,
         });
@@ -811,5 +815,136 @@ describe("a permission-gated refusal explains itself", () => {
     test("it is still the same typed error either way", async () => {
         await expect(denied().handleApiRequest("/deposit.do", {}, { retryable: false }))
             .rejects.toBeInstanceOf(SatimInvalidCredentialsError);
+    });
+});
+
+// ─── Security review fixes ───────────────────────────────────────────
+
+describe("duplicate query keys are rejected (parser differential)", () => {
+    const ID = "3ff6962a-7dcc-4283-ab50-a6d7dd3386fe";
+    test("a callback with a repeated order key extracts to null, not the first value", () => {
+        // ?orderId=VICTIM&orderId=B would otherwise be signed as B but acted on as VICTIM.
+        const url = `https://shop.dz/cb?orderId=VICTIM&orderId=${ID}&amount=1`;
+        expect(extractOrderId(url)).toBeNull();
+        expect(extractParams(url)).toBeNull();
+    });
+    test("any repeated key at all is rejected", () => {
+        expect(extractParams(`https://shop.dz/cb?mdOrder=${ID}&amount=1&amount=2`)).toBeNull();
+    });
+    test("a single-valued callback still works", () => {
+        expect(extractOrderId(`https://shop.dz/cb?mdOrder=${ID}`)).toBe(ID);
+        expect(extractParams(`https://shop.dz/cb?mdOrder=${ID}&amount=1`)).toEqual({ mdOrder: ID, amount: "1" });
+    });
+});
+
+describe("getUrl() enforces the same allowlist as redirectResponse()", () => {
+    const make = (formUrl: string) => new RegisterResponse({ orderId: "o", formUrl } as any);
+    test("a trusted satim.dz form URL is returned", () => {
+        expect(make("https://test.satim.dz/pay/x").getUrl()).toBe("https://test.satim.dz/pay/x");
+    });
+    test("an attacker-controlled origin is rejected by getUrl(), not just redirectResponse()", () => {
+        expect(() => make("https://evil.com/pay").getUrl()).toThrow(/Untrusted/);
+        expect(() => make("https://satim.dz.evil.com/pay").getUrl()).toThrow(/Untrusted/);
+        expect(() => make("http://test.satim.dz/pay").getUrl()).toThrow(/HTTPS/);
+    });
+});
+
+describe("SSRF guard covers the previously-missing ranges", () => {
+    test.each([
+        "http://100.100.100.200/",   // Alibaba metadata (CGNAT)
+        "http://100.64.0.1/",
+        "http://198.18.0.1/",
+        "http://224.0.0.1/",         // multicast
+        "http://240.0.0.1/",         // reserved
+        "http://localhost./",        // trailing-dot bypass
+    ])("%s is blocked", (url) => {
+        expect(() => assertSafeUrl(url, "x")).toThrow();
+    });
+    test("trailing-dot and IPv6 6to4/Teredo are recognised as private", () => {
+        expect(isPrivateHost("localhost.")).toBe(true);
+        expect(isPrivateHost("[2002:7f00:1::1]".slice(1, -1))).toBe(true);
+        expect(isPrivateHost("2001:0000:4136:e378::1")).toBe(true);
+    });
+    test("a genuine public host still passes", () => {
+        expect(() => assertSafeUrl("https://cib.satim.dz/x", "x")).not.toThrow();
+        expect(isPrivateHost("cib.satim.dz")).toBe(false);
+    });
+});
+
+describe("response body is capped", () => {
+    test("an oversized body is rejected rather than buffered", async () => {
+        const huge = "x".repeat(2_000_000);
+        const client = new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest",
+            fetch: (async () => new Response(huge, { status: 200 })) as any,
+        });
+        await expect(client.handleApiRequest("/getOrderStatus.do", {}))
+            .rejects.toThrow(/1 MiB cap/);
+    });
+    test("a normal body passes", async () => {
+        const client = new HttpClientService(false, {
+            baseUrl: "https://gw.satim.dz/payment/rest",
+            fetch: (async () => new Response(JSON.stringify({ OrderStatus: "2" }), { status: 200 })) as any,
+        });
+        await expect(client.handleApiRequest("/getOrderStatus.do", {})).resolves.toBeTruthy();
+    });
+});
+
+describe("merchantRef is sanitized in error messages", () => {
+    test("control characters are stripped from SatimDuplicateOrderError", () => {
+        const err = new SatimDuplicateOrderError("cart\x1b[31m\x00\x07-99");
+        expect(err.message).not.toMatch(/[\x00-\x1f]/);
+        expect(err.message).toContain("cart[31m-99");
+    });
+});
+
+describe("webhook requires a conscious choice about unsigned callbacks", () => {
+    const satim = () => {
+        const s = new Satim(CREDS);
+        (s as any).httpClientService = { handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000 }) };
+        return s;
+    };
+    test("neither secret nor opt-in throws at construction", () => {
+        expect(() => satim().createWebhookHandler({ onResolveAmount: () => 100, suppressMultiInstanceWarning: true }))
+            .toThrow(SatimMissingDataError);
+    });
+    test("callbackSecret is enough", () => {
+        expect(() => satim().createWebhookHandler({
+            onResolveAmount: () => 100, callbackSecret: "s", suppressMultiInstanceWarning: true,
+        })).not.toThrow();
+    });
+    test("allowUnverifiedCallbacks is enough", () => {
+        expect(() => satim().createWebhookHandler({
+            onResolveAmount: () => 100, allowUnverifiedCallbacks: true, suppressMultiInstanceWarning: true,
+        })).not.toThrow();
+    });
+});
+
+describe("toMinorUnits guards", () => {
+    test("throws a typed SDK error, not a bare Error", () => {
+        const err = (() => { try { toMinorUnits(-1); } catch (e) { return e; } })();
+        expect(err).toBeInstanceOf(SatimInvalidArgumentError);
+    });
+    test("a positive amount that rounds to 0 minor units is rejected", () => {
+        expect(() => toMinorUnits(5e-10)).toThrow(/0 minor units|2 decimal/);
+        expect(toMinorUnits(0.01)).toBe(1);
+    });
+});
+
+describe("confirm() cross-checks the settled currency", () => {
+    test("a currency mismatch on a successful payment throws", async () => {
+        const s = new Satim({ ...CREDS });   // defaults to DZD "012"
+        (s as any).httpClientService = {
+            handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000, currency: "840" }),
+        };
+        await expect(s.confirm("11111111-1111-1111-1111-111111111111", 100))
+            .rejects.toThrow(/currency mismatch/);
+    });
+    test("a matching currency is fine", async () => {
+        const s = new Satim({ ...CREDS });
+        (s as any).httpClientService = {
+            handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000, currency: "012" }),
+        };
+        await expect(s.confirm("11111111-1111-1111-1111-111111111111", 100)).resolves.toBeTruthy();
     });
 });

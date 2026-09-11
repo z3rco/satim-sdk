@@ -46,6 +46,7 @@ assert.match(deriveOrderNumber("cart-1"), /^[a-z0-9]{10}$/);
 
 const handler = configured.createWebhookHandler({
     onResolveAmount: () => 100,
+    allowUnverifiedCallbacks: true,
     suppressMultiInstanceWarning: true,
 });
 assert.ok(handler instanceof WebhookHandler);

@@ -38,6 +38,9 @@ export interface WebhookHandlerOptions {
 
     callbackSecret?: string;
 
+    // Required when no callbackSecret is set: forces a conscious choice to accept unsigned callbacks (guarded only by live re-fetch + amount verification).
+    allowUnverifiedCallbacks?: boolean;
+
     suppressMultiInstanceWarning?: boolean;
 }
 
@@ -53,6 +56,7 @@ export class WebhookHandler {
     private warnedAboutUncheckedSignature = false;
 
     private readonly processedSet = new Set<string>();
+    private static readonly MAX_PROCESSED = 10_000;
 
     private readonly inflightLocks = new Map<string, Promise<WebhookResult | null>>();
 
@@ -61,6 +65,12 @@ export class WebhookHandler {
             throw new SatimMissingDataError(
                 "onResolveAmount is required. The webhook handler must be able to look up " +
                 "the expected amount for each order ID to verify payment integrity.",
+            );
+        }
+        if (!options.callbackSecret && !options.allowUnverifiedCallbacks) {
+            throw new SatimMissingDataError(
+                "Set callbackSecret to verify signed callbacks, or allowUnverifiedCallbacks: true to accept unsigned ones " +
+                "(guarded only by live state re-fetch and amount verification). One is required.",
             );
         }
         this.satim = satim;
@@ -81,7 +91,12 @@ export class WebhookHandler {
         this.onCheckDuplicate = options.onCheckDuplicate
             ?? ((id) => this.processedSet.has(id));
         this.onMarkProcessed = options.onMarkProcessed
-            ?? ((id) => { this.processedSet.add(id); });
+            ?? ((id) => {
+                if (this.processedSet.size >= WebhookHandler.MAX_PROCESSED) {
+                    this.processedSet.delete(this.processedSet.values().next().value!);
+                }
+                this.processedSet.add(id);
+            });
 
         const maxCallbacks = options.maxCallbacksPerWindow ?? 100;
         const windowMs = options.rateLimitWindowMs ?? 60_000;

@@ -44,6 +44,7 @@ export class HttpClientService {
     private static readonly DEFAULT_TIMEOUT_MS = 30_000;
     private static readonly DEFAULT_MAX_RETRIES = 2;
     private static readonly BASE_RETRY_DELAY_MS = 500;
+    private static readonly MAX_RESPONSE_BYTES = 1_048_576;
 
     private readonly maxRetries: number;
     private readonly timeoutMs: number;
@@ -156,6 +157,32 @@ export class HttpClientService {
         }
     }
 
+    // Stream with a hard cap so a hostile endpoint (only reachable via a custom baseUrl) can't exhaust memory with an unbounded body.
+    private async readCappedText(response: Response): Promise<string> {
+        const reader = response.body?.getReader();
+        if (!reader) {
+            const text = await response.text();
+            if (text.length > HttpClientService.MAX_RESPONSE_BYTES) {
+                throw new SatimUnexpectedResponseError("Response body exceeds the 1 MiB cap.", "parse");
+            }
+            return text;
+        }
+        const decoder = new TextDecoder();
+        let out = "";
+        let total = 0;
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            total += value.byteLength;
+            if (total > HttpClientService.MAX_RESPONSE_BYTES) {
+                await reader.cancel();
+                throw new SatimUnexpectedResponseError("Response body exceeds the 1 MiB cap.", "parse");
+            }
+            out += decoder.decode(value, { stream: true });
+        }
+        return out + decoder.decode();
+    }
+
     private buildBody(data: Record<string, unknown>): string {
         const body = new URLSearchParams();
         for (const [k, v] of Object.entries(data)) {
@@ -222,7 +249,7 @@ export class HttpClientService {
                     );
                 }
 
-                const text = await response.text();
+                const text = await this.readCappedText(response);
                 let parsed: T;
                 try {
                     parsed = JSON.parse(text) as T;
