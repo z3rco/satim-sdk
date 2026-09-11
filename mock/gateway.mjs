@@ -61,6 +61,12 @@ const balances = new Map(
 );
 const byOrderNumber = new Map();
 let armedFaults = [];
+/**
+ * Operations this terminal is not entitled to, set via POST /__restrict.
+ * SATIM grants these per merchant, so an SDK has to cope with a gateway
+ * that deploys an endpoint and still refuses to let you call it.
+ */
+let restricted = new Set();
 
 const log = (...a) => { if (LOG) console.log("[mock]", ...a); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -610,8 +616,15 @@ const server = createServer(async (req, res) => {
         log(`armed faults: ${armedFaults.join(", ") || "(none)"}`);
         return sendJson(res, { armed: armedFaults });
     }
+    if (path === "/__restrict" && req.method === "POST") {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        restricted = new Set(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}").operations ?? []);
+        log(`restricted operations: ${[...restricted].join(", ") || "(none)"}`);
+        return sendJson(res, { restricted: [...restricted] });
+    }
     if (path === "/__reset" && req.method === "POST") {
-        orders.clear(); byRequestId.clear(); byOrderNumber.clear(); armedFaults = [];
+        orders.clear(); byRequestId.clear(); byOrderNumber.clear(); armedFaults = []; restricted.clear();
         for (const [pan, card] of Object.entries(TEST_CARDS)) {
             if (typeof card.balanceMinor === "number") balances.set(pan, card.balanceMinor);
         }
@@ -656,6 +669,14 @@ const server = createServer(async (req, res) => {
     if (applyFault(res)) return;
 
     const form = await readForm(req);
+
+    // A terminal that lacks the permission gets access denied even with
+    // perfectly good credentials — the case checkCapabilities() detects.
+    if (restricted.has(path.replace("/payment/rest", ""))) {
+        log(`restricted: ${path}`);
+        return sendJson(res, capitalised(ACCESS_DENIED));
+    }
+
     if (!authOk(form)) {
         log(`auth rejected for userName=${form.userName ?? "(none)"}`);
         return sendJson(res, path.includes("register")

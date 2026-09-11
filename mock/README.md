@@ -117,6 +117,18 @@ Other control endpoints: `POST /__reset` clears all state,
 `POST /__notify?orderId=…` redelivers an order's callback the way the real
 gateway does on a state change.
 
+## Simulating a restricted terminal
+
+SATIM grants order-management operations per merchant, so an endpoint can
+be deployed and still closed to you. `POST /__restrict` reproduces that:
+
+```bash
+curl -X POST localhost:8787/__restrict -d '{"operations":["/refund.do","/reverse.do"]}'
+```
+
+Those endpoints then answer access-denied even with valid credentials,
+which is what `satim.checkCapabilities()` detects. `POST /__reset` clears it.
+
 ## Wire format
 
 The mock defaults to **numeric** `errorCode` / `OrderStatus` / `actionCode`,

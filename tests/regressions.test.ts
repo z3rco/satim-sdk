@@ -716,3 +716,100 @@ describe("the gateway's real callback format", () => {
         expect(outcome.verified).toBe(true);
     });
 });
+
+// ─── Discovering what the terminal may actually do ───────────────────
+
+describe("checkCapabilities", () => {
+    /** Answer each endpoint with a scripted gateway error code. */
+    function gatewayWith(codes: Record<string, string>) {
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: (endpoint: string) => {
+                const code = codes[endpoint] ?? "6";
+                if (code === "0") return Promise.resolve({ OrderStatus: "0" });
+                if (code === "5") return Promise.reject(new SatimInvalidCredentialsError("Access denied"));
+                if (code === "6") return Promise.reject(new SatimInvalidArgumentError("Invalid order ID"));
+                if (code === "404") {
+                    return Promise.reject(new SatimUnexpectedResponseError(
+                        "HTTP Error: 404", "http", undefined, { httpStatus: 404 }));
+                }
+                return Promise.reject(new SatimUnexpectedResponseError("boom", "gateway"));
+            },
+        };
+        return satim;
+    }
+
+    test("an unknown-order error means the operation is open to us", async () => {
+        // errorCode 6 proves the gateway processed the call and only
+        // objected to the order, which is exactly what we want to know.
+        const caps = await gatewayWith({}).checkCapabilities();
+        expect(caps.credentialsValid).toBe(true);
+        expect(caps.operations).toEqual({
+            status: "available", statusExtended: "available", deposit: "available",
+            refund: "available", reverse: "available", decline: "available",
+        });
+    });
+
+    test("access denied on one operation means it is not permitted", async () => {
+        const caps = await gatewayWith({ "/refund.do": "5", "/reverse.do": "5" }).checkCapabilities();
+        expect(caps.credentialsValid).toBe(true);
+        expect(caps.operations.refund).toBe("not_permitted");
+        expect(caps.operations.reverse).toBe("not_permitted");
+        expect(caps.operations.deposit).toBe("available");
+    });
+
+    test("bad credentials deny everything, so nothing is claimed about entitlement", async () => {
+        const caps = await gatewayWith({
+            "/getOrderStatus.do": "5", "/refund.do": "5", "/deposit.do": "5",
+            "/reverse.do": "5", "/decline.do": "5", "/getOrderStatusExtended.do": "5",
+        }).checkCapabilities();
+        expect(caps.credentialsValid).toBe(false);
+        expect(Object.values(caps.operations)).toEqual(Array(6).fill("unknown"));
+    });
+
+    test("a 404 reports the endpoint as undeployed, not as forbidden", async () => {
+        const caps = await gatewayWith({ "/decline.do": "404" }).checkCapabilities();
+        expect(caps.operations.decline).toBe("unavailable");
+    });
+
+    test("the probe never sends a real order id", async () => {
+        const seen: any[] = [];
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: (endpoint: string, data: any) => {
+                seen.push(data);
+                return Promise.reject(new SatimInvalidArgumentError("Invalid order ID"));
+            },
+        };
+        await satim.checkCapabilities();
+        expect(seen.length).toBeGreaterThan(0);
+        for (const data of seen) {
+            expect(data.orderId).toBe("00000000-0000-0000-0000-000000000000");
+        }
+    });
+});
+
+describe("a permission-gated refusal explains itself", () => {
+    const denied = () => new HttpClientService(false, {
+        baseUrl: "https://gw.satim.dz/payment/rest",
+        fetch: (async () => new Response(JSON.stringify({ ErrorCode: 5, ErrorMessage: "Access denied" }),
+            { status: 200 })) as any,
+    });
+
+    test("refund mentions terminal entitlement, not just the password", async () => {
+        await expect(denied().handleApiRequest("/refund.do", {}, { retryable: false }))
+            .rejects.toThrow(/not enabled for your terminal/);
+        await expect(denied().handleApiRequest("/refund.do", {}, { retryable: false }))
+            .rejects.toThrow(/checkCapabilities/);
+    });
+
+    test("register keeps the plain credentials message", async () => {
+        await expect(denied().handleApiRequest("/register.do", {}, { retryable: false }))
+            .rejects.toThrow("Invalid username or password or terminal ID");
+    });
+
+    test("it is still the same typed error either way", async () => {
+        await expect(denied().handleApiRequest("/deposit.do", {}, { retryable: false }))
+            .rejects.toBeInstanceOf(SatimInvalidCredentialsError);
+    });
+});

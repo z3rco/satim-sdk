@@ -14,6 +14,7 @@ import { HttpClientService, type HttpClientOptions } from "./client.js";
 import {
     SatimMissingDataError, SatimInvalidArgumentError,
     SatimDuplicateOrderError, SatimGatewayError,
+    SatimInvalidCredentialsError, SatimUnexpectedResponseError,
 } from "./exceptions.js";
 import type { SatimCredentials, RegisterOrderResponse, ConfirmOrderResponse } from "./types.js";
 import { RegisterResponse } from "./responses/register.js";
@@ -23,6 +24,23 @@ import { assertOrderId, assertConfirmAmount, assertRefundAmount, assertOrderNumb
 import { deriveIdempotencyKey, deriveOrderNumber } from "./idempotency.js";
 import { randomOrderNumber } from "./crypto.js";
 import { WebhookHandler, type WebhookHandlerOptions } from "./webhook/handler.js";
+
+/** Whether a given gateway operation is open to the configured terminal. */
+export type CapabilityState = "available" | "not_permitted" | "unavailable" | "unknown";
+
+/** Result of {@link Satim.checkCapabilities}. */
+export interface SatimCapabilities {
+    /** `false` when the gateway rejected the credentials outright. */
+    credentialsValid: boolean;
+    operations: {
+        status: CapabilityState;
+        statusExtended: CapabilityState;
+        deposit: CapabilityState;
+        refund: CapabilityState;
+        reverse: CapabilityState;
+        decline: CapabilityState;
+    };
+}
 
 /** Key always stripped from caller-supplied `jsonParams` then set from the credential store. */
 const FORCE_TERMINAL_KEY = "force_terminal_id";
@@ -303,6 +321,86 @@ export class Satim extends SatimConfig {
             { userName: this.username, password: this.password, orderId, language: this._language },
         );
         return new ConfirmResponse(result);
+    }
+
+    /**
+     * Discover which order-management operations this terminal may call.
+     *
+     * SATIM enables BPC's operations per merchant, so `deposit`, `refund`,
+     * `reverse` and `decline` may each be deployed but closed to you. That
+     * is otherwise only discoverable by asking your bank, or by watching a
+     * real refund fail in production.
+     *
+     * Each operation is probed with a sentinel order id that cannot exist.
+     * Nothing is mutated: there is no order to act on, so the gateway can
+     * only answer with a permission verdict.
+     *
+     * - `"available"` — the gateway accepted the call and complained about
+     *   the unknown order, which means the operation itself is open to you.
+     * - `"not_permitted"` — access denied while credentials are otherwise
+     *   good, so the operation is closed to this terminal. Ask your bank.
+     * - `"unavailable"` — the endpoint is not deployed at all (HTTP 404).
+     * - `"unknown"` — the gateway answered in a way this probe cannot
+     *   classify; treat as inconclusive rather than as a verdict.
+     *
+     * `credentialsValid` is resolved first from `/getOrderStatus.do`. When
+     * it is `false` every other result is `"unknown"`, because a bad
+     * password denies everything and tells you nothing about entitlement.
+     *
+     * Intended for a startup check or a deployment smoke test, not per
+     * request: it costs one round trip per operation.
+     */
+    public async checkCapabilities(): Promise<SatimCapabilities> {
+        const SENTINEL = "00000000-0000-0000-0000-000000000000";
+        const base = { userName: this.username, password: this.password, language: this._language };
+
+        const probe = async (endpoint: string, extra: Record<string, unknown> = {}) => {
+            try {
+                await this.httpClientService.handleApiRequest(
+                    endpoint, { ...base, orderId: SENTINEL, ...extra }, { retryable: false },
+                );
+                return "available" as const;
+            } catch (err) {
+                // errorCode 6 "unknown order" is the signal we want: the
+                // gateway processed the call and only objected to the order.
+                if (err instanceof SatimInvalidArgumentError) return "available" as const;
+                if (err instanceof SatimGatewayError) return "available" as const;
+                if (err instanceof SatimInvalidCredentialsError) return "denied" as const;
+                if (err instanceof SatimUnexpectedResponseError && err.httpStatus === 404) {
+                    return "unavailable" as const;
+                }
+                return "unknown" as const;
+            }
+        };
+
+        const control = await probe("/getOrderStatus.do");
+        const credentialsValid = control !== "denied";
+
+        const resolve = (verdict: Awaited<ReturnType<typeof probe>>): CapabilityState => {
+            if (!credentialsValid) return "unknown";
+            if (verdict === "denied") return "not_permitted";
+            return verdict;
+        };
+
+        const [statusExtended, deposit, refund, reverse, decline] = await Promise.all([
+            probe("/getOrderStatusExtended.do"),
+            probe("/deposit.do", { amount: 0, currency: this._currency }),
+            probe("/refund.do", { amount: 1, currency: this._currency }),
+            probe("/reverse.do", { currency: this._currency }),
+            probe("/decline.do", { orderNumber: "0" }),
+        ]);
+
+        return {
+            credentialsValid,
+            operations: {
+                status: resolve(control),
+                statusExtended: resolve(statusExtended),
+                deposit: resolve(deposit),
+                refund: resolve(refund),
+                reverse: resolve(reverse),
+                decline: resolve(decline),
+            },
+        };
     }
 
     // ─── Safe (idempotent) registration ──────────────────────────────────

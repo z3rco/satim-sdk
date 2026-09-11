@@ -19,6 +19,9 @@ export type { CircuitBreakerOptions } from "./circuit-breaker.js";
 
 const NON_PRINTABLE = /[^\x20-\x7E]/g;
 
+/** Operations SATIM grants per merchant, where "access denied" is ambiguous. */
+const PERMISSION_GATED = ["/deposit.do", "/refund.do", "/reverse.do", "/decline.do"];
+
 /**
  * Sanitise a gateway error message before placing it in an SDK exception.
  * Strips control characters (could forge log lines) and truncates to 200
@@ -164,7 +167,7 @@ export class HttpClientService {
 
         if (!retryable) {
             return this.sendRequest<T>(endpoint, data, false)
-                .then(result => { this.validateApiResponse(result); return result; });
+                .then(result => { this.validateApiResponse(result, endpoint); return result; });
         }
 
         // Collapse concurrent identical idempotent requests into one round trip.
@@ -175,7 +178,7 @@ export class HttpClientService {
         if (existing) return existing;
 
         const promise: Promise<T> = this.sendRequest<T>(endpoint, data, true)
-            .then(result => { this.validateApiResponse(result); return result; })
+            .then(result => { this.validateApiResponse(result, endpoint); return result; })
             .finally(() => this._inflight.delete(key));
         this._inflight.set(key, promise);
         return promise;
@@ -370,7 +373,7 @@ export class HttpClientService {
      * through {@link sanitizeGatewayMessage} first.
      * @throws The exception corresponding to the gateway's `ErrorCode`.
      */
-    private validateApiResponse(response: unknown): void {
+    private validateApiResponse(response: unknown, endpoint = ""): void {
         const res = response as Record<string, unknown>;
         const raw = res.ErrorCode ?? res.errorCode;
         const code = raw !== undefined && raw !== null ? String(raw) : undefined;
@@ -382,7 +385,17 @@ export class HttpClientService {
             "Unknown error";
 
         if (code === "5") {
-            throw new SatimInvalidCredentialsError("Invalid username or password or terminal ID");
+            // SATIM enables BPC's order-management operations per merchant, so
+            // "access denied" here is at least as likely to mean "your terminal
+            // may not do this" as "your password is wrong". Say both, or the
+            // merchant chases a credential problem that does not exist.
+            throw new SatimInvalidCredentialsError(
+                PERMISSION_GATED.some((e) => endpoint.includes(e))
+                    ? "Access denied. Either the credentials are wrong, or this operation is not "
+                      + "enabled for your terminal — deposit, refund, reverse and decline are "
+                      + "permission-gated per merchant. Run satim.checkCapabilities() to tell them apart."
+                    : "Invalid username or password or terminal ID",
+            );
         }
         if (code === "6") {
             throw new SatimInvalidArgumentError("Invalid order ID");

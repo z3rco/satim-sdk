@@ -53,6 +53,11 @@ The `createWebhookHandler()` method returns a handler that:
 
 ### Signed callbacks
 
+If your merchant profile signs callbacks and you have not configured
+`callbackSecret`, the SDK notices: the first notification carrying a
+`checksum` logs a one-time warning telling you to get the secret from your
+bank. You do not have to know in advance whether signing is switched on.
+
 BPC can sign callback notifications, and where a merchant profile is
 configured for it the notification carries a `checksum` parameter computed
 as HMAC-SHA256 over the other parameters, sorted by name and joined as

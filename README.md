@@ -114,6 +114,7 @@ if (response.isSuccessful()) {
 | `deposit(orderId, amount?)` | `/deposit.do`        | `ConfirmResponse`  | Capture a pre-authorized order (omit amount for the full order). |
 | `decline(orderId, orderNumber)` | `/decline.do`    | `ConfirmResponse`  | Cancel an order that was never paid. |
 | `statusExtended(orderId)`  | `/getOrderStatusExtended.do` | `ConfirmResponse` | Authoritative status; more detail than `status()`. |
+| `checkCapabilities()`      | (probes several)      | `SatimCapabilities` | Which operations this terminal is actually allowed to call. |
 
 ### Configuration (Fluent Immutable API)
 
@@ -212,6 +213,31 @@ An order is only marked processed once it reaches a **terminal** state —
 deposited, refunded, or reversed. Pre-authorized holds, declines and
 expiries stay unmarked so that a later capture or a customer's successful
 card retry is still delivered as `duplicate: false` and gets fulfilled.
+
+## Knowing what your terminal can do
+
+SATIM enables BPC's order-management operations per merchant, so `deposit`,
+`refund`, `reverse` and `decline` may each be deployed and still closed to
+you. Rather than finding out when a refund fails in production:
+
+```typescript
+const caps = await satim.checkCapabilities();
+// { credentialsValid: true,
+//   operations: { status: 'available', statusExtended: 'available',
+//                 deposit: 'available', refund: 'not_permitted',
+//                 reverse: 'not_permitted', decline: 'available' } }
+```
+
+Each operation is probed with an order id that cannot exist, so nothing is
+mutated — the gateway can only answer with a permission verdict. If the
+credentials themselves are rejected, `credentialsValid` is `false` and every
+operation reads `unknown`, because a bad password denies everything and
+proves nothing about entitlement.
+
+Run it at startup or as a deployment smoke test, not per request.
+
+If a gated operation is refused later anyway, the error says so rather than
+blaming your password, and points at this method.
 
 ## Error Handling
 

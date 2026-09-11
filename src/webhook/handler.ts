@@ -137,6 +137,8 @@ export class WebhookHandler {
     private readonly rateLimiter: SlidingWindowRateLimiter;
     /** Shared secret for checksum verification; unset means unsigned callbacks. */
     private readonly callbackSecret: string | undefined;
+    /** Set once the "gateway is signing but we are not checking" warning has fired. */
+    private warnedAboutUncheckedSignature = false;
 
     /** In-memory duplicate set used when no `onCheckDuplicate` is provided. */
     private readonly processedSet = new Set<string>();
@@ -228,11 +230,22 @@ export class WebhookHandler {
 
         // Checked before the rate limiter so forged traffic cannot spend the
         // window that real notifications need.
+        const params = extractParams(source);
         if (this.callbackSecret) {
-            const params = extractParams(source);
             if (!params || !verifyCallbackChecksum(params, this.callbackSecret)) {
                 return { verified: false, reason: "bad_signature" };
             }
+        } else if (params?.checksum && !this.warnedAboutUncheckedSignature) {
+            // The gateway is signing these and nobody asked for the secret.
+            // Whether a merchant profile signs callbacks is otherwise only
+            // discoverable by asking the bank, so say it out loud once.
+            this.warnedAboutUncheckedSignature = true;
+            console.warn(
+                "[satim-sdk] This callback carried a `checksum`, so your merchant profile "
+                + "signs notifications — but no callbackSecret is configured, so the signature "
+                + "is being ignored. Ask your bank for the shared secret and pass it as "
+                + "`callbackSecret` to verify origin as well as state.",
+            );
         }
 
         if (!this.rateLimiter.check()) return { verified: false, reason: "rate_limited" };
