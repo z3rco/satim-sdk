@@ -53,7 +53,7 @@ cardholder name, then challenges you with 3-D Secure.
 | `6280581000000056` | challenge | approves as a **pre-authorization** (hold) |
 | `6280581000000064` | challenge | never answers — order stays **pending** (`91`) |
 | `6280581000000072` | challenge | **checks a real 10 000,00 DA balance** — debits it, declines when short |
-| `5078001000000004` | frictionless, no challenge | approves (Edahabia) |
+| `5078001000000004` | challenge (Algérie Poste OTP) | approves (Edahabia) |
 
 Any future expiry, any 3-4 digit CVV, any cardholder name. The 3-D Secure
 OTP is `123456`; anything else is refused, three attempts per card.

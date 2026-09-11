@@ -38,7 +38,10 @@ export function brandOf(pan) {
  * `threeDS` decides what the challenge step does:
  * - `"pass"`   — the correct OTP authenticates.
  * - `"fail"`   — every OTP is refused, however many times you try.
- * - `"none"`   — the issuer does not challenge (frictionless).
+ * - `"none"`   — no challenge. Used for a card the gateway does not
+ *   recognise, which is refused outright rather than challenged. Both CIB
+ *   and Edahabia challenge in practice: CIB through the issuing bank's ACS,
+ *   Edahabia through Algérie Poste's OTP.
  *
  * `authorise` runs only once authentication succeeded. `orderStatus: null`
  * means the gateway reports no `OrderStatus` at all, which is what a real
@@ -155,8 +158,13 @@ export const TEST_CARDS = {
         },
     },
     "5078001000000004": {
-        label: "Edahabia — approved",
-        threeDS: "none",
+        label: "Edahabia — approved (OTP challenge, sent by Algérie Poste)",
+        // Edahabia is issued by Algérie Poste against a CCP account, and
+        // Algérie Poste sends a one-time code by SMS for every online
+        // payment — its own guidance lists "paiement en ligne" among the
+        // things the OTP is required for. So it challenges like CIB does;
+        // only the issuer behind the SMS differs.
+        threeDS: "pass",
         authorise: {
             orderStatus: "2",
             actionCode: "0",

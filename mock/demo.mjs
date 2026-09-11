@@ -203,13 +203,14 @@ async function main() {
         console.log(`   expired=${ok(r.isExpired())} message="${r.getErrorMessage()}"`);
     }
 
-    step(8, "Edahabia — frictionless, no challenge");
+    step(8, "Edahabia — OTP challenge, issued by Algérie Poste");
     {
         const reg = await register("CART-2008", 1800);
         const back = await pay(reg.getUrl(), CARD.edahabia);
-        console.log(`   approved without a challenge: ${ok(Boolean(back))}`);
+        console.log(`   approved after the OTP: ${ok(Boolean(back))}`);
         const r = await satim.confirm(reg.getOrderId(), 1800);
         console.log(`   successful=${ok(r.isSuccessful())} card=${r.getCardPan()}`);
+        console.log(dim("   same flow as CIB; the SMS comes from Algérie Poste rather than a bank"));
     }
 
     step(9, "Amount tampering is rejected");
