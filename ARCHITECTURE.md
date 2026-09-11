@@ -116,7 +116,7 @@ Backoff is exponential with 0–50% jitter: `BASE_RETRY_DELAY_MS × 2^attempt + 
 
 ### Zero-trust webhook verification
 
-SATIM does not sign callback payloads. The handler treats the payload as untrusted and re-fetches authoritative state:
+The handler treats the callback payload as untrusted and re-fetches authoritative state. When `callbackSecret` is set it also verifies the notification's `checksum` (HMAC-SHA256) first, rejecting forgeries before any gateway call:
 
 1. Extract `orderId` from the source (string, URL, Web `Request`, or object). Reject anything that fails the strict `[a-zA-Z0-9\-]{1,128}` format.
 2. Apply rate limit. If the sliding window is full, reject with `rate_limited`. `inspect()` surfaces that reason so the caller can answer `429` and have SATIM redeliver; `verify()` collapses it to `null`, which an unwary caller answers `200` — silently dropping a real payment notification.
@@ -126,7 +126,7 @@ SATIM does not sign callback payloads. The handler treats the payload as untrust
 6. If the response reached a **terminal** `OrderStatus` — deposited (`"2"`), refunded (`"4"`), reversed (`"3"`) — call `onMarkProcessed(orderId)`. Every other state stays unmarked.
 7. Marking is one-way: later callbacks for a marked order return `duplicate: true`, which callers are told not to fulfil. So the test is "definitely finished", not "not pending". A pre-authorized hold (`"1"`) still has a capture to come, and a declined attempt (no `OrderStatus` at all) may still be followed by a successful card retry on the same order — marking either would leave a paid customer unfulfilled.
 
-This model is strictly stronger than HMAC verification. A valid signature proves the payload was issued by the gateway; it does not prove the payload reflects current state. Replay and stale-webhook attacks pass signature checks but cannot pass live re-verification.
+A signature and a re-fetch answer different questions, so the handler does both. A valid signature proves the payload was issued by the gateway; it does not prove the payload reflects current state, and a replayed notification carries a perfectly valid one. Only live re-verification settles that.
 
 **Distributed deployments:** the in-process duplicate set is per-process. Multi-instance deployments must provide `onCheckDuplicate` and `onMarkProcessed` backed by a shared store with atomic check-and-mark semantics (Redis `SETNX`, database `INSERT … ON CONFLICT`). The SDK warns at construction time when the in-memory fallback is in use.
 

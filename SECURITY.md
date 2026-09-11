@@ -26,7 +26,7 @@ The SATIM API requires `userName` and `password` to be sent as `application/x-ww
 
 ## Response Integrity
 
-The SATIM/BPC gateway **does not** provide HMAC-based response signing. Responses are trusted over the TLS channel without additional MAC verification.
+API *responses* are not signed — they are trusted over the TLS channel without an additional MAC. Callback *notifications* are a different matter: see below.
 
 - **Runtime schema validation** — both `RegisterResponse` and `ConfirmResponse` validate the shape of the gateway JSON at construction time. Malformed or unexpected responses are rejected immediately with a `SatimUnexpectedResponseError` rather than propagating silently.
 - `getRawResponse()` returns a **deep clone** (`structuredClone`) to prevent consumers from accidentally mutating internal SDK state.
@@ -41,7 +41,7 @@ The SATIM/BPC gateway **does not** provide HMAC-based response signing. Response
 
 ## Webhook Verification (Zero-Trust Model)
 
-Since SATIM does not sign callback payloads, the SDK takes a strictly stronger approach than HMAC signature verification: **zero-trust server-to-server verification**.
+The SDK never trusts a callback payload. It re-fetches authoritative state from the gateway on every notification: **zero-trust server-to-server verification**.
 
 The `createWebhookHandler()` method returns a handler that:
 
@@ -51,9 +51,23 @@ The `createWebhookHandler()` method returns a handler that:
 4. **Rate-limits callbacks** — a sliding window rate limiter protects against callback flooding attacks.
 5. **Sanitizes the orderId** — validates format before making any gateway call.
 
-### Why this is stronger than HMAC
+### Signed callbacks
 
-HMAC signature verification (as used by Chargily, Stripe, etc.) proves that the payload was sent by the gateway. However:
+BPC can sign callback notifications, and where a merchant profile is
+configured for it the notification carries a `checksum` parameter computed
+as HMAC-SHA256 over the other parameters, sorted by name and joined as
+`name;value;…;`, using a secret shared with the bank.
+
+Pass that secret as `callbackSecret` and the handler verifies it before
+contacting the gateway, rejecting a mismatch with `bad_signature`. Leave it
+unset and callbacks are accepted unsigned, which is the default.
+
+Verification is **defence in depth, not a substitute** for re-fetching
+state — the point below still stands.
+
+### Why re-fetching matters even with a signature
+
+A signature proves the payload was sent by the gateway. That is worth having, and the SDK verifies it when configured. But on its own it is not enough:
 
 - A valid signature does not prove the payload reflects **current** state — replayed or stale webhooks pass signature checks.
 - A valid signature does not verify that the **amount** matches what you expected — a compromised or buggy gateway could send a valid signature on a wrong amount.

@@ -13,7 +13,8 @@ import type { Satim } from "../Satim.js";
 import type { ConfirmResponse } from "../responses/confirm.js";
 import { SatimInvalidArgumentError, SatimMissingDataError } from "../exceptions.js";
 import { SlidingWindowRateLimiter } from "./rate-limiter.js";
-import { extractOrderId } from "./extract.js";
+import { extractOrderId, extractParams } from "./extract.js";
+import { verifyCallbackChecksum } from "./checksum.js";
 
 /**
  * Why a callback did not produce a verified result.
@@ -23,7 +24,11 @@ import { extractOrderId } from "./extract.js";
  *   redelivers; a `200` here silently drops a real payment.
  * - `unknown_order` — `onResolveAmount` returned nullish. Respond `404`.
  */
-export type WebhookRejectionReason = "invalid_source" | "rate_limited" | "unknown_order";
+export type WebhookRejectionReason =
+    | "invalid_source"
+    | "bad_signature"
+    | "rate_limited"
+    | "unknown_order";
 
 /**
  * Outcome of {@link WebhookHandler.inspect}: a verified result or the
@@ -94,6 +99,20 @@ export interface WebhookHandlerOptions {
     /** Sliding window duration in ms. Default 60 000. */
     rateLimitWindowMs?: number;
     /**
+     * Shared secret for callback checksum verification.
+     *
+     * Set it only if the gateway signs your notifications — the merchant
+     * profile has to be configured for it, and the secret comes from the
+     * bank. When set, a callback whose `checksum` does not match is
+     * rejected with `bad_signature` before the gateway is contacted.
+     *
+     * This is defence in depth, not a replacement for re-fetching state: a
+     * signature proves origin, and a replayed notification carries a
+     * perfectly valid one. The handler re-verifies live state either way.
+     */
+    callbackSecret?: string;
+
+    /**
      * Suppress the construction-time `console.warn` that fires when the
      * in-memory duplicate fallback is in use. Set to `true` only after
      * confirming single-process deployment.
@@ -116,6 +135,8 @@ export class WebhookHandler {
     private readonly onCheckDuplicate: (orderId: string) => Promise<boolean> | boolean;
     private readonly onMarkProcessed: (orderId: string) => Promise<void> | void;
     private readonly rateLimiter: SlidingWindowRateLimiter;
+    /** Shared secret for checksum verification; unset means unsigned callbacks. */
+    private readonly callbackSecret: string | undefined;
 
     /** In-memory duplicate set used when no `onCheckDuplicate` is provided. */
     private readonly processedSet = new Set<string>();
@@ -147,6 +168,7 @@ export class WebhookHandler {
         }
         this.satim = satim;
         this.onResolveAmount = options.onResolveAmount;
+        this.callbackSecret = options.callbackSecret;
 
         const usingFallback = !options.onCheckDuplicate && !options.onMarkProcessed;
         if (usingFallback && !options.suppressMultiInstanceWarning) {
@@ -203,6 +225,16 @@ export class WebhookHandler {
     async inspect(source: unknown): Promise<WebhookOutcome> {
         const orderId = extractOrderId(source);
         if (!orderId) return { verified: false, reason: "invalid_source" };
+
+        // Checked before the rate limiter so forged traffic cannot spend the
+        // window that real notifications need.
+        if (this.callbackSecret) {
+            const params = extractParams(source);
+            if (!params || !verifyCallbackChecksum(params, this.callbackSecret)) {
+                return { verified: false, reason: "bad_signature" };
+            }
+        }
+
         if (!this.rateLimiter.check()) return { verified: false, reason: "rate_limited" };
 
         const existing = this.inflightLocks.get(orderId);

@@ -6,7 +6,7 @@ Zero-trust callback handler for SATIM gateway notifications.
 
 Receive a callback or redirect from SATIM and produce a server-verified `ConfirmResponse`. The callback payload is never trusted — every invocation triggers a server-to-server `satim.confirm()` against the real gateway, with automatic amount verification.
 
-This is strictly stronger than HMAC signature verification: a valid signature proves the payload was issued by the gateway, but does not prove the payload reflects current state. Re-fetching live state defeats both replay attacks and stale-webhook races.
+A signature and a re-fetch answer different questions, so the handler does both. `callbackSecret` enables HMAC-SHA256 `checksum` verification, which proves the notification came from the gateway; re-fetching live state proves it still reflects reality, which a replayed-but-validly-signed notification does not.
 
 ## Files
 

@@ -33,7 +33,17 @@ const encoder = new TextEncoder();
  * @returns 64 lowercase hex characters.
  */
 export function sha256Hex(input: string): string {
-    const bytes = encoder.encode(input);
+    return sha256Bytes(encoder.encode(input));
+}
+
+/**
+ * SHA-256 of raw bytes, lowercase hex.
+ *
+ * HMAC needs this: its inner and outer blocks are arbitrary bytes, and
+ * routing them through {@link sha256Hex} would UTF-8-encode anything above
+ * 0x7F into two bytes and silently produce the wrong digest.
+ */
+export function sha256Bytes(bytes: Uint8Array): string {
     const bitLen = bytes.length * 8;
 
     // Pad to a multiple of 64 bytes: 0x80, then zeros, then a 64-bit big-endian bit length.

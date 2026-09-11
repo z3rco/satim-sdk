@@ -14,6 +14,8 @@ import {
     SatimInvalidArgumentError,
 } from "../src/exceptions";
 import { ConfirmResponse } from "../src/responses/confirm";
+import { extractOrderId } from "../src/webhook/extract";
+import { verifyCallbackChecksum, buildSignedString } from "../src/webhook/checksum";
 
 const CREDS = { username: "u", password: "p", terminalId: "t" };
 
@@ -594,5 +596,123 @@ describe("deposit / decline / statusExtended", () => {
         expect(calls[0].endpoint).toBe("/getOrderStatusExtended.do");
         expect(calls[0].opts).toBeUndefined();   // defaults to retryable
         expect(r.isSuccessful()).toBe(true);
+    });
+});
+
+// ─── Callback format and signature ───────────────────────────────────
+
+describe("the gateway's real callback format", () => {
+    const ID = "3ff6962a-7dcc-4283-ab50-a6d7dd3386fe";
+
+    test("mdOrder is extracted — BPC callbacks carry no orderId at all", () => {
+        // Documented notification URL:
+        //   ...?mdOrder=...&orderNumber=...&operation=deposited&status=1
+        // Reading only `orderId` made every real callback unextractable, so
+        // the handler rejected genuine payment notifications as junk.
+        expect(extractOrderId(
+            `https://shop.dz/callback/?mdOrder=${ID}&orderNumber=10747&operation=deposited&status=1`,
+        )).toBe(ID);
+        expect(extractOrderId({ mdOrder: ID, operation: "deposited", status: "1" })).toBe(ID);
+        expect(extractOrderId({ url: `/cb?mdOrder=${ID}&status=1` })).toBe(ID);
+    });
+
+    test("orderId still works and wins when both are present", () => {
+        expect(extractOrderId(`https://shop.dz/cb?orderId=${ID}`)).toBe(ID);
+        expect(extractOrderId({ orderId: ID, mdOrder: "other-value" })).toBe(ID);
+    });
+
+    test("the format guard still applies to mdOrder", () => {
+        expect(extractOrderId({ mdOrder: "../../etc/passwd" })).toBeNull();
+        expect(extractOrderId({ mdOrder: "a".repeat(129) })).toBeNull();
+    });
+
+    test("the signed string matches BPC's worked example", () => {
+        const params = {
+            amount: "123456", mdOrder: ID, operation: "deposited",
+            orderNumber: "10747", status: "1",
+            checksum: "IGNORED", sign_alias: "IGNORED",
+        };
+        expect(buildSignedString(params)).toBe(
+            "amount;123456;mdOrder;3ff6962a-7dcc-4283-ab50-a6d7dd3386fe;"
+            + "operation;deposited;orderNumber;10747;status;1;",
+        );
+    });
+
+    test("checksum verification matches node:crypto's HMAC", async () => {
+        const { createHmac } = await import("node:crypto");
+        const params: Record<string, string> = {
+            amount: "123456", mdOrder: ID, operation: "deposited", status: "1",
+        };
+        const secret = "shared-secret-from-the-bank";
+        const checksum = createHmac("sha256", secret)
+            .update(buildSignedString(params)).digest("hex").toUpperCase();
+
+        expect(verifyCallbackChecksum({ ...params, checksum }, secret)).toBe(true);
+        expect(verifyCallbackChecksum({ ...params, amount: "1", checksum }, secret)).toBe(false);
+        expect(verifyCallbackChecksum({ ...params, checksum }, "wrong-secret")).toBe(false);
+        expect(verifyCallbackChecksum(params, secret)).toBe(false);           // no checksum
+        expect(verifyCallbackChecksum({ ...params, checksum }, "")).toBe(false); // no secret
+    });
+
+    test("keys longer than the HMAC block are pre-hashed correctly", async () => {
+        const { createHmac } = await import("node:crypto");
+        const secret = "k".repeat(200);
+        const params = { a: "1", b: "2" };
+        const checksum = createHmac("sha256", secret)
+            .update(buildSignedString(params)).digest("hex").toUpperCase();
+        expect(verifyCallbackChecksum({ ...params, checksum }, secret)).toBe(true);
+    });
+
+    test("a forged callback is rejected before the gateway is contacted", async () => {
+        let gatewayCalls = 0;
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: () => { gatewayCalls++; return Promise.resolve({ OrderStatus: "2", Amount: 10000 }); },
+        };
+        const handler = satim.createWebhookHandler({
+            onResolveAmount: () => 100,
+            callbackSecret: "shared-secret",
+            suppressMultiInstanceWarning: true,
+        });
+
+        const outcome = await handler.inspect(
+            `https://shop.dz/cb?mdOrder=${ID}&amount=10000&checksum=DEADBEEF`,
+        );
+        expect(outcome).toEqual({ verified: false, reason: "bad_signature" });
+        expect(gatewayCalls).toBe(0);
+    });
+
+    test("a correctly signed callback verifies end to end", async () => {
+        const { createHmac } = await import("node:crypto");
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000 }),
+        };
+        const handler = satim.createWebhookHandler({
+            onResolveAmount: () => 100,
+            callbackSecret: "shared-secret",
+            suppressMultiInstanceWarning: true,
+        });
+
+        const params: Record<string, string> = { mdOrder: ID, amount: "10000", status: "1" };
+        const checksum = createHmac("sha256", "shared-secret")
+            .update(buildSignedString(params)).digest("hex").toUpperCase();
+        const query = new URLSearchParams({ ...params, checksum }).toString();
+
+        const outcome = await handler.inspect(`https://shop.dz/cb?${query}`);
+        expect(outcome.verified).toBe(true);
+    });
+
+    test("without a configured secret, signatures are not required", async () => {
+        const satim = new Satim(CREDS);
+        (satim as any).httpClientService = {
+            handleApiRequest: () => Promise.resolve({ OrderStatus: "2", Amount: 10000 }),
+        };
+        const handler = satim.createWebhookHandler({
+            onResolveAmount: () => 100,
+            suppressMultiInstanceWarning: true,
+        });
+        const outcome = await handler.inspect(`https://shop.dz/cb?mdOrder=${ID}`);
+        expect(outcome.verified).toBe(true);
     });
 });
