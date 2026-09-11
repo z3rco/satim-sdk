@@ -1,15 +1,3 @@
-/**
- * Runtime-agnostic SHA-256 and CSPRNG. `crypto.subtle` is async and
- * `node:crypto` is absent or gated on edge runtimes, so this module ships
- * an in-tree SHA-256 (FIPS 180-4) with no `node:` imports and draws
- * randomness from the universal `crypto.getRandomValues`.
- *
- * Used only to derive stable identifiers, never to sign. Digests are
- * differential-tested against `node:crypto` in `tests/crypto.test.ts`.
- * @file
- */
-
-/** Round constants: first 32 bits of the fractional parts of the cube roots of the first 64 primes. */
 const K = new Uint32Array([
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -21,32 +9,19 @@ const K = new Uint32Array([
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
 
-/** Rotate a 32-bit word right by `n` bits. */
 function rotr(x: number, n: number): number {
     return (x >>> n) | (x << (32 - n));
 }
 
 const encoder = new TextEncoder();
 
-/**
- * SHA-256 of a UTF-8 string.
- * @returns 64 lowercase hex characters.
- */
 export function sha256Hex(input: string): string {
     return sha256Bytes(encoder.encode(input));
 }
 
-/**
- * SHA-256 of raw bytes, lowercase hex.
- *
- * HMAC needs this: its inner and outer blocks are arbitrary bytes, and
- * routing them through {@link sha256Hex} would UTF-8-encode anything above
- * 0x7F into two bytes and silently produce the wrong digest.
- */
 export function sha256Bytes(bytes: Uint8Array): string {
     const bitLen = bytes.length * 8;
 
-    // Pad to a multiple of 64 bytes: 0x80, then zeros, then a 64-bit big-endian bit length.
     const padded = new Uint8Array(((bytes.length + 9 + 63) >> 6) << 6);
     padded.set(bytes);
     padded[bytes.length] = 0x80;
@@ -96,23 +71,12 @@ export function sha256Bytes(bytes: Uint8Array): string {
     return out;
 }
 
-/** Digits and lowercase letters — the alphabet permitted by SATIM's AN.10 order-number field. */
 const BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-/** Length of every SDK-generated order number. 36^10 ≈ 3.66 × 10^15 distinct values. */
 export const ORDER_NUMBER_LENGTH = 10;
 
-/**
- * Largest multiple of 36 that fits in a byte. Bytes at or above this are
- * discarded (rejection sampling) so `% 36` stays uniform.
- */
 const REJECTION_BOUND = 252;
 
-/**
- * Generate a cryptographically random 10-character base-36 order number,
- * via `crypto.getRandomValues` with rejection sampling.
- * @throws Error when the runtime exposes no Web Crypto global.
- */
 export function randomOrderNumber(): string {
     if (typeof globalThis.crypto?.getRandomValues !== "function") {
         throw new Error(
@@ -134,12 +98,6 @@ export function randomOrderNumber(): string {
     return out.join("");
 }
 
-/**
- * Map a hex digest onto a fixed-width base-36 string. Consumes 64 bits
- * of the digest and reduces modulo `36^length`; the ~5000:1 ratio for
- * length 10 keeps modulo bias negligible.
- * @param hex A hex digest of at least 16 characters.
- */
 export function hexToBase36(hex: string, length: number = ORDER_NUMBER_LENGTH): string {
     const space = 36n ** BigInt(length);
     let value = BigInt(`0x${hex.slice(0, 16)}`) % space;

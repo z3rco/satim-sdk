@@ -1,13 +1,3 @@
-/**
- * Immutable fluent configuration base class. Credentials live in a
- * module-private `WeakMap<SatimConfig, Creds>` with no exported accessor,
- * so they never appear in `Object.keys`, `JSON.stringify`, or inspect
- * output. Every fluent setter clones (copying the `WeakMap` entry to the
- * new instance) and returns the clone, so shared instances can't leak
- * state across requests.
- * @file
- */
-
 import type { Language, CurrencyCode, SatimCredentials } from "./types.js";
 import { SatimInvalidArgumentError, SatimMissingDataError } from "./exceptions.js";
 import { assertSafeUrl } from "./ssrf.js";
@@ -19,16 +9,10 @@ import {
 
 interface Creds { username: string; password: string; terminalId: string; }
 
-/** Module-private credential store; keyed by instance so GC reclaims credentials automatically. */
 const _credentials = new WeakMap<SatimConfig, Creds>();
 
 const CURRENCIES: Record<string, CurrencyCode> = { DZD: "012", USD: "840", EUR: "978" };
 
-/**
- * Configuration carrier subclassed by `Satim`. Optional fields are
- * `undefined` until set; `_language`/`_currency` default to `"FR"`/`"012"`;
- * `_userDefinedFields` is a fresh object after each `clone()`.
- */
 export class SatimConfig {
     protected testMode = false;
     protected _language: Language = "FR";
@@ -42,24 +26,15 @@ export class SatimConfig {
     protected _sessionTimeoutSecs?: number;
     protected _idempotencyKey?: string;
     protected _userDefinedFields: Record<string, string> = {};
-    /** Development escape hatch for the SSRF guard. See {@link allowPrivateUrls}. */
+
     protected _allowPrivateUrls = false;
 
-    /** @returns Merchant username. Protected — never exposed publicly. */
     protected get username(): string { return _credentials.get(this)!.username; }
-    /** @returns Merchant password. Protected — never exposed publicly. */
+
     protected get password(): string { return _credentials.get(this)!.password; }
-    /** @returns Merchant terminal ID. Protected — never exposed publicly. */
+
     protected get terminalId(): string { return _credentials.get(this)!.terminalId; }
 
-    /**
-     * Bind credentials to this instance via the module-private `WeakMap`.
-     * Cannot be called twice on the same instance.
-     * @throws {@link SatimInvalidArgumentError} when credentials are
-     *         already bound, any field is non-string, or length limits
-     *         (AN.100 / AN.16) are exceeded.
-     * @throws {@link SatimMissingDataError} when any field is empty after trim.
-     */
     protected initFromCredentials(c: SatimCredentials): void {
         if (_credentials.has(this)) {
             throw new SatimInvalidArgumentError("Credentials have already been initialized and cannot be re-set.");
@@ -82,13 +57,6 @@ export class SatimConfig {
         _credentials.set(this, { username, password, terminalId });
     }
 
-    /**
-     * Produce a fresh `SatimConfig` (or subclass) with the same state.
-     * Fields are copied explicitly so subclasses can extend `clone()`
-     * safely. Credentials get a peer `WeakMap` entry, not a shared
-     * reference, so the clone can't leak state into `this`.
-     * @returns Independent clone safe to mutate without affecting `this`.
-     */
     protected clone(): this {
         const c = Object.create(Object.getPrototypeOf(this)) as this;
         c.testMode = this.testMode;
@@ -109,169 +77,76 @@ export class SatimConfig {
         return c;
     }
 
-    // ─── Fluent setters ──────────────────────────────────────────────────
-    // Each setter validates input, clones, mutates the clone, returns it.
-    // The original instance is never modified.
-
-    /**
-     * Set the payment amount in major currency units (whole DA for register).
-     *
-     * @returns Clone with the amount set.
-     * @throws {@link SatimInvalidArgumentError} via {@link assertRegisterAmount}
-     *         on shape violations, sub-50-DA values, or fractional dinars.
-     */
     public amount(amount: number): this {
         assertRegisterAmount(amount);
         const c = this.clone(); c._amount = amount; return c;
     }
 
-    /**
-     * Set the payment-page description (SATIM AN.600).
-     * @throws {@link SatimInvalidArgumentError} on non-string, overlong, or markup-bearing input.
-     */
     public description(description: string): this {
         assertDescription(description);
         const c = this.clone(); c._description = description; return c;
     }
 
-    /**
-     * Set the payment currency by ISO 3-letter code.
-     * @param curr One of `"DZD"`, `"USD"`, `"EUR"`. Mapped to numeric ISO 4217 internally.
-     * @throws {@link SatimInvalidArgumentError} on unsupported currencies.
-     */
     public currency(curr: "DZD" | "USD" | "EUR"): this {
         const code = CURRENCIES[curr];
         if (!code) throw new SatimInvalidArgumentError("Invalid currency: Allowed currencies are [DZD, USD, EUR].");
         const c = this.clone(); c._currency = code; return c;
     }
 
-    /**
-     * Set the URL the customer is redirected to on payment failure.
-     * Falls back to `returnUrl` when sent to the gateway if not set.
-     * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
-     */
     public failUrl(url: string): this {
         assertSafeUrl(url, "Invalid fail URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._failUrl = url; return c;
     }
 
-    /**
-     * Set the URL the customer is redirected to after payment.
-     * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
-     */
     public returnUrl(url: string): this {
         assertSafeUrl(url, "Invalid return URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._returnUrl = url; return c;
     }
 
-    /**
-     * Set the server-to-server webhook URL the gateway POSTs status changes to.
-     * @throws {@link SatimInvalidArgumentError} via {@link assertSafeUrl}.
-     */
     public dynamicCallbackUrl(url: string): this {
         assertSafeUrl(url, "Invalid dynamic callback URL. Must be a valid http/https URL.", this._allowPrivateUrls);
         const c = this.clone(); c._dynamicCallbackUrl = url; return c;
     }
 
-    /**
-     * Set a custom 1-10 character alphanumeric order number.
-     * Defaults to a CSPRNG-generated 10-digit value if unset at register time.
-     * @throws {@link SatimInvalidArgumentError} on format violations.
-     */
     public orderNumber(orderNumber: string | number): this {
         const str = assertOrderNumber(orderNumber);
         const c = this.clone(); c._orderNumber = str; return c;
     }
 
-    /**
-     * Toggle between production (`cib.satim.dz`) and test (`test2.satim.dz`) gateway.
-     * The `Satim` subclass overrides this to rebuild its default HTTP client
-     * with the matching base URL.
-     */
     public setTestMode(isEnabled: boolean): this {
         const c = this.clone(); c.testMode = isEnabled; return c;
     }
 
-    /**
-     * Set the hosted payment form language.
-     * @throws {@link SatimInvalidArgumentError} on unsupported codes.
-     */
     public language(lang: Language): this {
         assertLanguage(lang);
         const c = this.clone(); c._language = lang.toUpperCase() as Language; return c;
     }
 
-    /**
-     * Set a single `jsonParams` key/value pair. Reserved keys
-     * (`force_terminal_id`, `__proto__`, `constructor`, `prototype`) are
-     * rejected as defence against terminal-ID injection and prototype
-     * pollution; `Satim.buildData` also strips `force_terminal_id`.
-     * @throws {@link SatimInvalidArgumentError} on reserved keys, malformed
-     *         keys, non-string values, or values exceeding 20 characters.
-     */
     public userDefinedField(key: string, value: string): this {
         assertUserField(key, value);
         const c = this.clone(); c._userDefinedFields[key] = value; return c;
     }
 
-    /**
-     * Set multiple `jsonParams` key/value pairs (own enumerable properties
-     * only). Each pair is validated as if passed to {@link userDefinedField}.
-     * @throws {@link SatimInvalidArgumentError} on the first invalid entry.
-     */
     public userDefinedFields(fields: Record<string, string>): this {
         let cur: this = this;
         for (const [k, v] of Object.entries(fields)) cur = cur.userDefinedField(k, v);
         return cur;
     }
 
-    /**
-     * Set the payment session timeout in seconds (`[600, 86400]`).
-     * @throws {@link SatimInvalidArgumentError} on out-of-range or non-integer input.
-     */
     public timeout(seconds: number): this {
         assertTimeout(seconds);
         const c = this.clone(); c._sessionTimeoutSecs = seconds; return c;
     }
 
-    /**
-     * Permit loopback and private-network URLs in {@link returnUrl},
-     * {@link failUrl} and {@link dynamicCallbackUrl}.
-     *
-     * Off by default: those URLs are handed to the gateway, and pointing
-     * them at internal addresses is how SSRF happens. Turn it on to run
-     * against a local server, and never in production.
-     *
-     * Call it **before** the URL setters — validation happens as each URL
-     * is set, so a clone that has not been told yet still rejects them.
-     * Obfuscated IP encodings stay rejected either way.
-     *
-     * ```ts
-     * satim.allowPrivateUrls(true).returnUrl("http://localhost:3000/return")
-     * ```
-     */
     public allowPrivateUrls(enabled: boolean): this {
         const c = this.clone(); c._allowPrivateUrls = enabled === true; return c;
     }
 
-    /**
-     * Set the idempotency key (`externalRequestId`). Enables automatic
-     * retries for `register()`/`registerPreAuth()`; without one, retrying
-     * after a timeout could create a duplicate order. Use
-     * {@link deriveIdempotencyKey} or `safeRegister(merchantRef)` to derive one.
-     * @throws {@link SatimInvalidArgumentError} on format violations.
-     */
     public idempotencyKey(key: string): this {
         assertIdempotencyKey(key);
         const c = this.clone(); c._idempotencyKey = key; return c;
     }
 
-    // ─── Redacting serializers ───────────────────────────────────────────
-
-    /**
-     * Custom JSON serializer used by `JSON.stringify(satim)`. Returns a
-     * snapshot with credential fields replaced by `"[REDACTED]"`.
-     */
     public toJSON(): Record<string, unknown> {
         return {
             username: "[REDACTED]",
@@ -290,17 +165,14 @@ export class SatimConfig {
         };
     }
 
-    /** Node.js `util.inspect` hook — returns the same redacted snapshot as `toJSON`. */
     public [Symbol.for("nodejs.util.inspect.custom")](): Record<string, unknown> {
         return this.toJSON();
     }
 
-    /** Stringification — never reveals credentials. */
     public toString(): string {
         return "[SatimConfig credentials=REDACTED]";
     }
 
-    /** Primitive coercion hook — delegates to `toString`. */
     public [Symbol.toPrimitive](): string {
         return this.toString();
     }

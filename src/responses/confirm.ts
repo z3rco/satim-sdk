@@ -1,130 +1,60 @@
-/**
- * `ConfirmResponse`: typed wrapper for `/public/acknowledgeTransaction.do`
- * (confirm), `/getOrderStatus.do`, `/refund.do`, and `/reverse.do` results.
- *
- * The nine status predicates are mutually exclusive: exactly one returns
- * `true` for a well-formed response. They chain (leaves → isExpired →
- * isCancelled → isRejected → isFailed), so a new predicate must be added
- * to the exclusion checks of every predicate after it.
- * @file
- */
-
 import { SatimUnexpectedResponseError } from "../exceptions.js";
 import type { ConfirmOrderResponse } from "../types.js";
 import { toMinorUnits, isWholeMinorUnits } from "../money.js";
 import { validateConfirmSchema } from "./schema.js";
 
-/**
- * Accepted shape for a gateway minor-unit amount. A trailing `.0`/`.00` is
- * tolerated because gateways routinely serialise integers through a
- * decimal formatter — rejecting `"5000.00"` would throw on a valid
- * successful payment. Any other fraction (`"5000.5"`) is still rejected
- * as malformed rather than silently rounded.
- */
 const MINOR_UNIT_PATTERN = /^\d+(?:\.0+)?$/;
 
-/**
- * Immutable wrapper around an order-management response. `_raw` is a deep
- * clone validated and normalised at construction; no mutators are exposed.
- */
 export class ConfirmResponse {
     private readonly _raw: ConfirmOrderResponse;
 
-    /**
-     * Validates and deep-clones the gateway payload. Normalises `OrderStatus`,
-     * `ErrorCode`, `actionCode` to string (or `undefined`).
-     * @throws {@link SatimUnexpectedResponseError} on schema violations.
-     */
     constructor(raw: ConfirmOrderResponse) {
         validateConfirmSchema(raw);
         this._raw = structuredClone(raw);
     }
 
-    // ─── PII-bearing accessors ───────────────────────────────────────────
-    // Unredacted gateway values. getRawResponse() redacts these; these
-    // named getters are the only way to read them.
-
-    /** @returns Cardholder IP address as reported by the gateway, or `undefined`. */
     public getIpAddress(): string | undefined { return this._raw.Ip; }
-    /** @returns Cardholder name as printed on the card, or `undefined`. */
+
     public getCardHolderName(): string | undefined { return this._raw.cardholderName; }
-    /** @returns Card expiry in YYYYMM format, or `undefined`. */
+
     public getCardExpiry(): string | undefined { return this._raw.expiration; }
-    /** @returns Masked PAN (e.g. `4111**1111`) as redacted by the gateway, or `undefined`. */
+
     public getCardPan(): string | undefined { return this._raw.Pan; }
-    /** @returns Issuer-generated approval code, or `undefined` for non-success responses. */
+
     public getApprovalCode(): string | undefined { return this._raw.approvalCode; }
-    /** @returns The order number as echoed by the gateway, or `undefined`. */
+
     public getOrderNumber(): string | undefined {
         return this._raw.OrderNumber ?? this._raw.orderNumber;
     }
 
-    /**
-     * Captured amount in major units (e.g. DA). Returns `undefined` when
-     * the gateway value is absent, non-numeric, fractional, or exceeds
-     * `Number.MAX_SAFE_INTEGER` rather than silently coercing it. Callers
-     * needing strictness should also call {@link verifyAmount}.
-     */
     public getAmount(): number | undefined {
         return parseMinorField(this._raw.Amount ?? this._raw.amount);
     }
 
-    /**
-     * Actually-debited amount in major units. Equals {@link getAmount} for
-     * standard captures; may be less for partial captures (pre-auth flows).
-     * Same null-vs-malformed semantics as {@link getAmount}.
-     */
     public getDepositAmount(): number | undefined {
         return parseMinorField(this._raw.depositAmount);
     }
 
-    // ─── Leaf predicates (mutually exclusive: at most one returns true) ──
-
-    /** OrderStatus `"2"`: authorized and captured. */
     public isSuccessful(): boolean { return this._raw.OrderStatus === "2"; }
-    /** OrderStatus `"4"`: refunded. */
+
     public isRefunded(): boolean { return this._raw.OrderStatus === "4"; }
-    /**
-     * Payment is still in flight and must be re-checked, never treated as
-     * failed. Covers three BPC states: `"0"` registered but unpaid, `"5"`
-     * the issuer's ACS has started 3-D Secure authentication, and `"7"`
-     * pending payment.
-     */
+
     public isPending(): boolean {
         const s = this._raw.OrderStatus;
         return s === "0" || s === "5" || s === "7";
     }
-    /** OrderStatus `"3"`: authorization canceled / reversed. */
+
     public isReversed(): boolean { return this._raw.OrderStatus === "3"; }
-    /** OrderStatus `"1"`: funds held, awaiting capture via {@link Satim.deposit}. */
+
     public isPreAuthorized(): boolean { return this._raw.OrderStatus === "1"; }
-    /**
-     * OrderStatus `"8"`: part of the order has been captured and more
-     * captures are expected. Money has moved, so this is not a failure —
-     * but it is not the final state either, and `Amount` will not match
-     * what has actually been taken. Read {@link getDepositAmount}.
-     */
+
     public isPartiallyCaptured(): boolean { return this._raw.OrderStatus === "8"; }
 
-    // ─── Composite predicates ────────────────────────────────────────────
-    // Each early-returns `false` when an earlier predicate in the chain is
-    // `true` — see the mutual-exclusivity note in the file header.
-
-    /** Session timed out (`actionCode === "-2007"`), only when no terminal OrderStatus is present. */
     public isExpired(): boolean {
         if (this.hasKnownOrderStatus()) return false;
         return this._raw.actionCode === "-2007";
     }
 
-    /**
-     * Customer cancelled. Detected by `actionCode === "10"`.
-     *
-     * The `ErrorMessage` fallback below is a last resort and only matches
-     * English text: BPC states that "errorMessage value can vary, so it
-     * should not be hardcoded", and the gateway returns it in whatever
-     * `language` the request asked for — which this SDK defaults to `"FR"`.
-     * Treat `actionCode` as authoritative.
-     */
     public isCancelled(): boolean {
         if (this.hasKnownOrderStatus() || this.isExpired()) return false;
         if (!this.hasErrorSignal()) return false;
@@ -132,11 +62,6 @@ export class ConfirmResponse {
         return this._raw.ErrorMessage?.toLowerCase().includes("payment is cancelled") ?? false;
     }
 
-    /**
-     * Bank declined: OrderStatus `"6"`, or `actionCode ∈ {"2003","111"}`,
-     * or `respCode` outside `{"", "00"}`. The English-only `ErrorMessage`
-     * fallback carries the same caveat as {@link isCancelled}.
-     */
     public isRejected(): boolean {
         if (this._raw.OrderStatus === "6") return true;
         if (this.hasKnownOrderStatus() || this.isCancelled() || this.isExpired()) return false;
@@ -147,27 +72,17 @@ export class ConfirmResponse {
         return this._raw.ErrorMessage?.toLowerCase().includes("payment is declined") ?? false;
     }
 
-    /** Catch-all: `true` iff every other predicate is `false`. */
     public isFailed(): boolean {
         if (this.hasKnownOrderStatus()) return false;
         return !this.isExpired() && !this.isCancelled() && !this.isRejected();
     }
 
-    /**
-     * True when the gateway supplied an OrderStatus this SDK recognises.
-     * The composites below only guess from `actionCode` when it did not.
-     */
     private hasKnownOrderStatus(): boolean {
         return this.isSuccessful() || this.isRefunded() || this.isPending()
             || this.isReversed() || this.isPreAuthorized() || this.isPartiallyCaptured()
             || this._raw.OrderStatus === "6";
     }
 
-    /**
-     * True iff `ErrorCode` is a real error, or `params`/`actionCode` is
-     * present. Distinguishes an actual error response from one with no
-     * diagnostic fields.
-     */
     private hasErrorSignal(): boolean {
         const code = this._raw.ErrorCode;
         if (code === "0" || code === undefined) {
@@ -176,12 +91,6 @@ export class ConfirmResponse {
         return true;
     }
 
-    // ─── Messages ────────────────────────────────────────────────────────
-
-    /**
-     * Localised success/info message. Falls back to {@link getErrorMessage}
-     * for non-success terminal states.
-     */
     public getSuccessMessage(): string {
         if (this.isSuccessful()) {
             return this._raw.params?.respCode_desc
@@ -193,11 +102,6 @@ export class ConfirmResponse {
         return this.getErrorMessage();
     }
 
-    /**
-     * Localised failure message keyed to the active predicate. Declined
-     * payments get the generic `"Your transaction was rejected"` rather
-     * than the gateway's specific reason; read {@link getRawResponse} for that.
-     */
     public getErrorMessage(): string {
         if (this.isExpired()) return "Payment session expired";
         if (this.isCancelled()) return "Payment was cancelled";
@@ -210,16 +114,6 @@ export class ConfirmResponse {
             ?? "Payment failed";
     }
 
-    // ─── Amount verification ─────────────────────────────────────────────
-
-    /**
-     * Assert captured amount equals `expectedAmount`, comparing minor-unit
-     * integers via {@link toMinorUnits}. This is the SDK's sole defence
-     * against partial-capture manipulation; `Satim.confirm()` calls it
-     * automatically on `isSuccessful()` responses.
-     * @throws {@link SatimUnexpectedResponseError} when the gateway amount
-     *         is absent, non-numeric, fractional, or mismatches.
-     */
     public verifyAmount(expectedAmount: number): void {
         const rawAmount = this._raw.Amount ?? this._raw.amount;
         if (rawAmount === undefined) {
@@ -241,11 +135,6 @@ export class ConfirmResponse {
         }
     }
 
-    /**
-     * Shallow copy of the raw gateway response with cardholder PII
-     * (`Ip`, `Pan`, `cardholderName`, `expiration`) redacted. Use for
-     * debugging/logging; for PII, call the dedicated getters instead.
-     */
     public getRawResponse(): Record<string, unknown> {
         const copy: Record<string, unknown> = { ...this._raw };
         if (copy.Ip !== undefined) copy.Ip = "[REDACTED]";
@@ -256,7 +145,6 @@ export class ConfirmResponse {
     }
 }
 
-/** Parse a gateway minor-unit field into a major-unit number, or `undefined` for absent/non-numeric/fractional/oversize input. */
 function parseMinorField(raw: number | string | undefined): number | undefined {
     if (raw === undefined) return undefined;
     const str = String(raw).trim();
