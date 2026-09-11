@@ -19,7 +19,6 @@
   "scripts": {
     "build": "tsc",
     "smoke": "node scripts/smoke.mjs",
-    "shop": "node examples/shop/start.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "docs": "typedoc",
