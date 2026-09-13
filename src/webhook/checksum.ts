@@ -56,6 +56,9 @@ function timingSafeEqual(a: string, b: string): boolean {
 export function verifyCallbackChecksum(params: Record<string, string>, secret: string): boolean {
     const provided = params.checksum;
     if (!provided || !secret) return false;
+    for (const [name, value] of Object.entries(params)) {
+        if (!EXCLUDED.has(name) && (name.includes(";") || value.includes(";"))) return false;
+    }
     const expected = hmacSha256Hex(secret, buildSignedString(params)).toUpperCase();
     return timingSafeEqual(expected, provided.toUpperCase());
 }

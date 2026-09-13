@@ -36,7 +36,7 @@ export type CapabilityState =
   | 'unknown';
 
 export interface SatimCapabilities {
-  credentialsValid: boolean;
+  credentialsValid: boolean | 'unknown';
   operations: {
     status: CapabilityState;
     statusExtended: CapabilityState;
@@ -83,6 +83,15 @@ export class Satim extends SatimConfig {
         clone.testMode,
         clone._httpClientOptions,
       );
+    } else if (
+      !clone.httpClientService.hasBaseUrlOverride() &&
+      clone.httpClientService.getTestMode() !== isEnabled
+    ) {
+      throw new SatimInvalidArgumentError(
+        'setTestMode() has no effect with a custom HttpClientService: it keeps the URL ' +
+          'it was constructed with. Construct the client with the matching testMode ' +
+          '(or a baseUrl) instead.',
+      );
     }
     return clone;
   }
@@ -127,7 +136,7 @@ export class Satim extends SatimConfig {
       // Defence in depth (mainly against a caller-supplied hostile baseUrl): the settled currency must match what we registered under.
       if (
         result.currency !== undefined &&
-        String(result.currency) !== this._currency
+        String(result.currency).trim().padStart(3, '0') !== this._currency
       ) {
         throw new SatimUnexpectedResponseError(
           `payment currency mismatch. Expected ${this._currency}, got ${String(result.currency)}`,
@@ -307,12 +316,13 @@ export class Satim extends SatimConfig {
     };
 
     const control = await probe('/getOrderStatus.do');
-    const credentialsValid = control !== 'denied';
+    const credentialsValid: boolean | 'unknown' =
+      control === 'available' ? true : control === 'denied' ? false : 'unknown';
 
     const resolve = (
       verdict: Awaited<ReturnType<typeof probe>>,
     ): CapabilityState => {
-      if (!credentialsValid) return 'unknown';
+      if (credentialsValid !== true) return 'unknown';
       if (verdict === 'denied') return 'not_permitted';
       return verdict;
     };
@@ -366,10 +376,6 @@ export class Satim extends SatimConfig {
 
   private getFinalOrderNumber(): string {
     return this._orderNumber ?? randomOrderNumber();
-  }
-
-  private validateOrderId(orderId: string, context: string): void {
-    assertOrderId(orderId, context);
   }
 
   private buildData(orderNumber: string): Record<string, unknown> {

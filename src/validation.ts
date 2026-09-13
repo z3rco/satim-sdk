@@ -41,9 +41,6 @@ export function assertConfirmAmount(amount: number): void {
 
 export function assertRefundAmount(amount: number): void {
     assertAmountShape(amount, "Amount");
-    if (toMinorUnits(amount) < 1) {
-        throw new SatimInvalidArgumentError("Amount too small: must convert to at least 1 minor unit (centime/cent).");
-    }
 }
 
 export function assertOrderId(orderId: string, context: string): void {

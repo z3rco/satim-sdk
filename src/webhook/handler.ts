@@ -33,7 +33,7 @@ export interface WebhookHandlerOptions {
 
   onCheckDuplicate?: (orderId: string) => Promise<boolean> | boolean;
 
-  onMarkProcessed?: (orderId: string) => Promise<void> | void;
+  onMarkProcessed?: (orderId: string) => Promise<boolean | void> | boolean | void;
 
   maxCallbacksPerWindow?: number;
 
@@ -53,7 +53,9 @@ export class WebhookHandler {
   private readonly onCheckDuplicate: (
     orderId: string,
   ) => Promise<boolean> | boolean;
-  private readonly onMarkProcessed: (orderId: string) => Promise<void> | void;
+  private readonly onMarkProcessed: (
+    orderId: string,
+  ) => Promise<boolean | void> | boolean | void;
   private readonly rateLimiter: SlidingWindowRateLimiter;
 
   private readonly callbackSecret: string | undefined;
@@ -191,8 +193,10 @@ export class WebhookHandler {
     if (isDuplicate && response.isSuccessful())
       response.verifyAmount(expectedAmount);
 
-    if (!isDuplicate && WebhookHandler.isTerminal(response))
-      await this.onMarkProcessed(orderId);
+    if (!isDuplicate && WebhookHandler.isTerminal(response)) {
+      const claimed = await this.onMarkProcessed(orderId);
+      if (claimed === false) return { orderId, response, duplicate: true };
+    }
     return { orderId, response, duplicate: isDuplicate };
   }
 

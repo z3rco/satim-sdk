@@ -20,6 +20,7 @@ import {
   toMinorUnits,
 } from '../src/utils';
 import { WebhookHandler } from '../src/webhook';
+import { assertOrderId } from '../src/validation';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -391,19 +392,17 @@ describe('3. Regex bypass attacks', () => {
   });
 
   test('validateOrderId, very long orderId', () => {
-    const satim = makeSatim();
     const longId = 'a'.repeat(129);
-    // validateOrderId checks length > 128
-    expect(() => (satim as any).validateOrderId(longId, 'test')).toThrow(
+    // assertOrderId checks length > 128
+    expect(() => assertOrderId(longId, 'test')).toThrow(
       SatimInvalidArgumentError,
     );
   });
 
   test('validateOrderId, orderId with special chars', () => {
-    const satim = makeSatim();
-    expect(() =>
-      (satim as any).validateOrderId('order;DROP TABLE', 'test'),
-    ).toThrow(SatimInvalidArgumentError);
+    expect(() => assertOrderId('order;DROP TABLE', 'test')).toThrow(
+      SatimInvalidArgumentError,
+    );
   });
 
   test('ReDoS attempt on amount regex, very long digit string', () => {

@@ -1,26 +1,45 @@
-<!-- Thanks for contributing! Please fill in the sections below. -->
-
 ## Summary
 
-<!-- One paragraph: what changed and why. -->
+> Replace: what changed and why, in one paragraph. State the observable behaviour before
+> and after.
 
-## Type of change
+## Type
 
-- [ ] Bug fix (non-breaking change that fixes an issue)
-- [ ] New feature (non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would change existing behaviour)
-- [ ] Documentation update
-- [ ] Internal refactor / chore
+- [ ] Bug fix (no API change)
+- [ ] Feature (no API change)
+- [ ] Breaking change
+- [ ] Documentation
+- [ ] Internal refactor or chore
 
-## Checklist
+## Gate
 
 - [ ] `bun run typecheck` passes
 - [ ] `bun run test` passes
-- [ ] I added or updated tests covering the change
-- [ ] I updated relevant documentation (README, ARCHITECTURE.md, module READMEs, TSDoc)
-- [ ] I kept the zero-dependency rule intact
-- [ ] I followed the immutable fluent-API style for any new setters
+- [ ] `bun run build` passes
+- [ ] `npm run smoke` passes
+- [ ] Tests added or updated; a bug fix has a test that failed before the fix
+
+## Rules (CONTRIBUTING.md section 1)
+
+- [ ] No new runtime dependency
+- [ ] No `node:` import and no Node only API in `src/`
+- [ ] New setters clone and return the clone
+- [ ] No `any` added to the public surface
+- [ ] The invariants in ARCHITECTURE.md section 4 still hold
+
+## Blast radius
+
+> Replace: which of these the change touches, or "none". Retry policy, breaker accounting,
+> credential handling, SSRF rules, amount conversion, predicate contract, webhook marking.
+
+## Documentation
+
+- [ ] TSDoc on any new or changed public declaration
+- [ ] ARCHITECTURE.md updated for cross module behaviour
+- [ ] Module README updated for module internals
+- [ ] README.md and CHANGELOG.md updated for caller visible changes
+- [ ] SECURITY.md updated if the security posture moved
 
 ## Related issues
 
-<!-- e.g. Closes #123 -->
+> Replace: for example, Closes #123.

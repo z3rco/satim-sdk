@@ -1,43 +1,52 @@
-# Contributor Covenant Code of Conduct
+# Code of Conduct
 
-## Our Pledge
+Adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
 
-We as members, contributors, and leaders pledge to make participation in our community a harassment-free experience for everyone, regardless of age, body size, visible or invisible disability, ethnicity, sex characteristics, gender identity and expression, level of experience, education, socio-economic status, nationality, personal appearance, race, caste, color, religion, or sexual identity and orientation.
+## 1. Pledge
 
-We pledge to act and interact in ways that contribute to an open, welcoming, diverse, inclusive, and healthy community.
+We as members, contributors, and leaders pledge to make participation in this community a
+harassment free experience for everyone, regardless of age, body size, visible or invisible
+disability, ethnicity, sex characteristics, gender identity and expression, level of
+experience, education, socio economic status, nationality, personal appearance, race,
+caste, colour, religion, or sexual identity and orientation.
 
-## Our Standards
+We pledge to act and interact in ways that contribute to an open, welcoming, diverse,
+inclusive, and healthy community.
 
-Examples of behavior that contributes to a positive environment:
+## 2. Standards
 
-- Demonstrating empathy and kindness toward other people
-- Being respectful of differing opinions, viewpoints, and experiences
-- Giving and gracefully accepting constructive feedback
-- Accepting responsibility and apologizing to those affected by our mistakes
-- Focusing on what is best not just for us as individuals, but for the overall community
+Expected:
 
-Examples of unacceptable behavior:
+- Demonstrating empathy and kindness toward other people.
+- Being respectful of differing opinions, viewpoints, and experiences.
+- Giving and gracefully accepting constructive feedback.
+- Accepting responsibility and apologising to those affected by our mistakes.
+- Focusing on what is best not just for us as individuals, but for the overall community.
 
-- The use of sexualized language or imagery, and sexual attention or advances of any kind
-- Trolling, insulting or derogatory comments, and personal or political attacks
-- Public or private harassment
-- Publishing others' private information without their explicit permission
-- Other conduct which could reasonably be considered inappropriate in a professional setting
+Unacceptable:
 
-## Enforcement Responsibilities
+- Sexualised language or imagery, and sexual attention or advances of any kind.
+- Trolling, insulting or derogatory comments, and personal or political attacks.
+- Public or private harassment.
+- Publishing others' private information without their explicit permission.
+- Other conduct which could reasonably be considered inappropriate in a professional setting.
 
-Community leaders are responsible for clarifying and enforcing our standards of acceptable behavior and will take appropriate and fair corrective action in response to any behavior that they deem inappropriate, threatening, offensive, or harmful.
+## 3. Responsibilities
 
-## Scope
+Community leaders clarify and enforce these standards, and will take appropriate and fair
+corrective action in response to any behaviour they deem inappropriate, threatening,
+offensive, or harmful.
 
-This Code of Conduct applies within all community spaces, and also applies when an individual is officially representing the community in public spaces.
+## 4. Scope
 
-## Enforcement
+This Code of Conduct applies in all community spaces, and when an individual is officially
+representing the community in public spaces.
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by opening a [GitHub Security Advisory](https://github.com/z3rco/satim-sdk/security/advisories/new) (for private reports) or emailing the maintainers directly.
+## 5. Enforcement
 
-All complaints will be reviewed and investigated promptly and fairly. Community leaders are obligated to respect the privacy and security of the reporter.
+Report abusive, harassing, or otherwise unacceptable behaviour by opening a
+[GitHub Security Advisory](https://github.com/z3rco/satim-sdk/security/advisories/new) for
+a private report, or by emailing the maintainers directly.
 
-## Attribution
-
-This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org), version 2.1.
+All complaints are reviewed and investigated promptly and fairly. Community leaders are
+obligated to respect the privacy and security of the reporter.

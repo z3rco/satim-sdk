@@ -6,6 +6,7 @@
  * failures, and webhook state transitions beyond pending/success.
  */
 import { describe, expect, test, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { Satim } from '../src/Satim';
 import { CircuitBreaker } from '../src/circuit-breaker';
 import { HttpClientService } from '../src/client';
@@ -1224,5 +1225,155 @@ describe('confirm() cross-checks the settled currency', () => {
     await expect(
       s.confirm('11111111-1111-1111-1111-111111111111', 100),
     ).resolves.toBeTruthy();
+  });
+});
+
+describe('constructor option validation', () => {
+  test('maxRetries rejects non-finite numbers instead of silently never sending', () => {
+    for (const bad of [NaN, Infinity, -Infinity]) {
+      expect(() => new HttpClientService(false, { maxRetries: bad })).toThrow(
+        SatimInvalidArgumentError,
+      );
+    }
+    expect(() => new HttpClientService(false, { maxRetries: -1 })).not.toThrow();
+    expect(() => new HttpClientService(false, { maxRetries: 3.7 })).not.toThrow();
+  });
+
+  test('circuit breaker rejects NaN thresholds', () => {
+    expect(() => new CircuitBreaker({ failureThreshold: NaN })).toThrow(SatimInvalidArgumentError);
+    expect(() => new CircuitBreaker({ failureThreshold: 0 })).toThrow(SatimInvalidArgumentError);
+    expect(() => new CircuitBreaker({ resetTimeoutMs: NaN })).toThrow(SatimInvalidArgumentError);
+    expect(() => new CircuitBreaker({ probeTimeoutMs: NaN })).toThrow(SatimInvalidArgumentError);
+    expect(() => new CircuitBreaker({ failureThreshold: 2, resetTimeoutMs: 0 })).not.toThrow();
+  });
+
+  test('a slow half-open probe is not declared abandoned mid-flight', async () => {
+    const cb = new CircuitBreaker({ failureThreshold: 1, resetTimeoutMs: 10, probeTimeoutMs: 60_000 });
+    cb.onFailure();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(cb.allowRequest()).toBe(true);
+    expect(cb.allowRequest()).toBe(false);
+  });
+
+  test('baseUrl rejects embedded credentials, query strings, and fragments', () => {
+    for (const url of [
+      'https://user:pass@gw.satim.dz/payment/rest',
+      'https://gw.satim.dz/payment/rest?x=1',
+      'https://gw.satim.dz/payment/rest#frag',
+    ]) {
+      expect(() => new HttpClientService(false, { baseUrl: url })).toThrow(
+        SatimInvalidArgumentError,
+      );
+    }
+  });
+});
+
+describe('setTestMode with a custom HttpClientService', () => {
+  const fetchOk = (async () => new Response('{}', { status: 200 })) as any;
+
+  test('throws instead of silently keeping the old environment', () => {
+    const prodClient = new HttpClientService(false, { fetch: fetchOk });
+    const satim = new Satim(CREDS, prodClient);
+    expect(() => satim.setTestMode(true)).toThrow(/custom HttpClientService/);
+  });
+
+  test('accepts a matching testMode or a baseUrl override', () => {
+    const testClient = new HttpClientService(true, { fetch: fetchOk });
+    expect(() => new Satim(CREDS, testClient).setTestMode(true)).not.toThrow();
+
+    const proxied = new HttpClientService(false, {
+      fetch: fetchOk,
+      baseUrl: 'https://gw.satim.dz/payment/rest',
+    });
+    expect(() => new Satim(CREDS, proxied).setTestMode(true)).not.toThrow();
+  });
+});
+
+describe('confirm() currency normalization', () => {
+  const paid = (currency: unknown) =>
+    (async () =>
+      new Response(
+        JSON.stringify({ OrderStatus: '2', Amount: 500000, currency, ErrorCode: '0' }),
+        { status: 200 },
+      )) as any;
+
+  test('accepts the currency as a JSON number', async () => {
+    const satim = new Satim(CREDS, { fetch: paid(12), baseUrl: 'https://cib.satim.dz' });
+    const res = await satim.confirm('11111111-2222-3333-4444-555555555555', 5000);
+    expect(res.isSuccessful()).toBe(true);
+  });
+
+  test('still rejects a real mismatch', async () => {
+    const satim = new Satim(CREDS, { fetch: paid(840), baseUrl: 'https://cib.satim.dz' });
+    await expect(
+      satim.confirm('11111111-2222-3333-4444-555555555555', 5000),
+    ).rejects.toThrow(/currency mismatch/);
+  });
+});
+
+describe('getRawResponse returns a detached copy', () => {
+  test('mutating a nested params object does not corrupt the live ConfirmResponse', () => {
+    const res = new ConfirmResponse({ ErrorCode: '1', params: { respCode: '00' } });
+    expect(res.isRejected()).toBe(false);
+    (res.getRawResponse() as any).params.respCode = '05';
+    expect(res.isRejected()).toBe(false);
+  });
+
+  test('RegisterResponse extra gateway fields are detached too', () => {
+    const res = new RegisterResponse({
+      orderId: 'o1',
+      formUrl: 'https://cib.satim.dz/f',
+      nested: { deep: 1 },
+    } as any);
+    (res.getRawResponse() as any).nested.deep = 2;
+    expect((res.getRawResponse() as any).nested.deep).toBe(1);
+  });
+});
+
+describe('callback checksum canonicalization', () => {
+  test('params containing ";" fail closed even with a matching HMAC', () => {
+    const secret = 'test-secret';
+    const sign = (s: string) => createHmac('sha256', secret).update(s).digest('hex');
+    expect(verifyCallbackChecksum({ a: '1', b: '2', checksum: sign('a;1;b;2;') }, secret)).toBe(true);
+    expect(verifyCallbackChecksum({ 'a;1;b': '2', checksum: sign('a;1;b;2;') }, secret)).toBe(false);
+    expect(verifyCallbackChecksum({ a: '1;2', checksum: sign('a;1;2;') }, secret)).toBe(false);
+  });
+});
+
+describe('webhook atomic claim', () => {
+  test('onMarkProcessed returning false reports the callback as a duplicate', async () => {
+    const satim = stubbedSatim(() => Promise.resolve({ OrderStatus: '2', Amount: 10000 }));
+    const handler = satim.createWebhookHandler({
+      allowUnverifiedCallbacks: true,
+      onResolveAmount: () => 100,
+      onCheckDuplicate: () => false,
+      onMarkProcessed: () => false,
+    });
+    const result = await handler.verify({ orderId: 'ORDER-RACE' });
+    expect(result!.duplicate).toBe(true);
+    expect(result!.response.isSuccessful()).toBe(true);
+  });
+
+  test('a void return keeps the legacy "marked first" meaning', async () => {
+    const satim = stubbedSatim(() => Promise.resolve({ OrderStatus: '2', Amount: 10000 }));
+    const handler = satim.createWebhookHandler({
+      allowUnverifiedCallbacks: true,
+      onResolveAmount: () => 100,
+      onCheckDuplicate: () => false,
+      onMarkProcessed: () => {},
+    });
+    const result = await handler.verify({ orderId: 'ORDER-LEGACY' });
+    expect(result!.duplicate).toBe(false);
+  });
+});
+
+describe('checkCapabilities transport failure', () => {
+  test('reports credentialsValid "unknown" when the control probe never completes', async () => {
+    const satim = stubbedSatim(() =>
+      Promise.reject(new SatimUnexpectedResponseError('Network or internal error', 'network')),
+    );
+    const caps = await satim.checkCapabilities();
+    expect(caps.credentialsValid).toBe('unknown');
+    expect(Object.values(caps.operations)).toEqual(Array(6).fill('unknown'));
   });
 });

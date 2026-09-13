@@ -1,3 +1,5 @@
+import { SatimInvalidArgumentError } from './exceptions.js';
+
 type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerOptions {
@@ -5,6 +7,8 @@ export interface CircuitBreakerOptions {
     failureThreshold?: number;
 
     resetTimeoutMs?: number;
+
+    probeTimeoutMs?: number;
 }
 
 export class CircuitBreaker {
@@ -17,10 +21,24 @@ export class CircuitBreaker {
     private probeStartedAt: number | null = null;
     private readonly failureThreshold: number;
     private readonly resetTimeoutMs: number;
+    private readonly probeTimeoutMs: number;
 
     constructor(opts?: CircuitBreakerOptions) {
-        this.failureThreshold = opts?.failureThreshold ?? 5;
-        this.resetTimeoutMs = opts?.resetTimeoutMs ?? 30_000;
+        const failureThreshold = opts?.failureThreshold ?? 5;
+        const resetTimeoutMs = opts?.resetTimeoutMs ?? 30_000;
+        const probeTimeoutMs = opts?.probeTimeoutMs ?? resetTimeoutMs;
+        if (!Number.isInteger(failureThreshold) || failureThreshold < 1) {
+            throw new SatimInvalidArgumentError("CircuitBreaker: failureThreshold must be a positive integer.");
+        }
+        if (!Number.isFinite(resetTimeoutMs) || resetTimeoutMs < 0) {
+            throw new SatimInvalidArgumentError("CircuitBreaker: resetTimeoutMs must be a finite number >= 0.");
+        }
+        if (!Number.isFinite(probeTimeoutMs) || probeTimeoutMs < 0) {
+            throw new SatimInvalidArgumentError("CircuitBreaker: probeTimeoutMs must be a finite number >= 0.");
+        }
+        this.failureThreshold = failureThreshold;
+        this.resetTimeoutMs = resetTimeoutMs;
+        this.probeTimeoutMs = probeTimeoutMs;
     }
 
     allowRequest(): boolean {
@@ -58,7 +76,7 @@ export class CircuitBreaker {
 
     private isProbeAbandoned(): boolean {
         return this.probeStartedAt !== null
-            && Date.now() - this.probeStartedAt >= this.resetTimeoutMs;
+            && Date.now() - this.probeStartedAt >= this.probeTimeoutMs;
     }
 
     onFailure(): void {

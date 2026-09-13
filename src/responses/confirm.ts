@@ -139,7 +139,7 @@ export class ConfirmResponse {
     }
 
     public getRawResponse(): Record<string, unknown> {
-        const copy: Record<string, unknown> = { ...this._raw };
+        const copy = structuredClone(this._raw) as Record<string, unknown>;
         if (copy.Ip !== undefined) copy.Ip = "[REDACTED]";
         if (copy.Pan !== undefined) copy.Pan = "[REDACTED]";
         if (copy.cardholderName !== undefined) copy.cardholderName = "[REDACTED]";

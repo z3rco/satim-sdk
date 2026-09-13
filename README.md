@@ -1,65 +1,55 @@
-<div align="center">
-
 # satim-sdk
 
-**The stateless, secure, zero-dependency TypeScript SDK for the [SATIM](https://www.satim.dz/) payment gateway.**
+TypeScript client for the SATIM payment gateway (CIB and Edahabia cards, Algeria).
+Zero runtime dependencies. Web-standard globals only. Strict TypeScript.
 
-CIB and Edahabia card payments for Algeria, production-grade, runtime-agnostic, security-first.
-
-[![CI](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE.md)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](#compatibility)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
-[![Zero dependencies](https://img.shields.io/badge/dependencies-0-success)](./package.json)
-[![API Docs](https://img.shields.io/badge/docs-TypeDoc-blueviolet)](https://z3rco.github.io/satim-sdk/)
-[![Discussions](https://img.shields.io/badge/discussions-GitHub-orange)](https://github.com/z3rco/satim-sdk/discussions)
-
-</div>
-
----
+[![CI](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/ci.yml) [![CodeQL](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/z3rco/satim-sdk/actions/workflows/codeql.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE.md) [![API Docs](https://img.shields.io/badge/docs-TypeDoc-blueviolet)](https://z3rco.github.io/satim-sdk/)
 
 > [!WARNING]
-> **This SDK has never been tested against a live production SATIM environment.**
-> It has been developed and validated exclusively against the SATIM test gateway (`test.satim.dz`) and simulated responses.
-> Use in production entirely at your own risk. The authors and contributors accept no responsibility for payment failures, data loss, financial losses, or any other damages arising from the use of this software in any environment.
-> **Always perform your own end-to-end testing against the SATIM test gateway before going live.**
+> Never exercised against the live SATIM production gateway. Validated only against
+> the test gateway (`test2.satim.dz`) and simulated responses. Production use is at
+> your own risk; the authors accept no liability for payment failures, data loss, or
+> financial loss. Run your own end to end test pass against the test gateway first.
 
-## Why satim-sdk?
+## 1. Scope
 
-- **Zero runtime dependencies.** Just the Web Fetch API. No transitive supply chain.
-- **Runs everywhere fetch runs.** Node 20+, Bun, Deno, Cloudflare Workers, Vercel Edge.
-- **Strictly immutable, fluent API.** Every setter returns a new instance, no cross-request state leaks.
-- **Security in depth by default.** SSRF guards, credential isolation in a module-private `WeakMap`, terminal-ID injection prevention, IEEE 754-safe currency conversion, and a deliberately conservative retry policy that never double-charges.
-- **Typed gateway errors.** Discriminated `SatimError` subclasses with localized messages and a sanitized raw payload for logs (PII redacted).
-- **Zero-trust webhooks.** Built-in HMAC verification, replay protection, and rate limiting, designed for distributed deployments.
-- **Strict TypeScript.** Full type coverage, no `any` escape hatches in the public API.
+In scope:
 
-## Compatibility
+- Order registration (`/register.do`, `/registerPreAuth.do`) and hosted form redirect.
+- Order lifecycle: acknowledge, status, extended status, deposit, refund, reverse, decline.
+- Terminal capability probing.
+- Zero trust callback handling (signature verification plus live state re-fetch).
 
-| Runtime               | Version | Notes                          |
-| --------------------- | ------- | ------------------------------ |
-| Node.js               | ≥ 20    | Native `fetch` required        |
-| Bun                   | ≥ 1.0   |                                |
-| Deno                  | ≥ 1.28  |                                |
-| Cloudflare Workers    | All     | No `nodejs_compat` flag needed |
-| Vercel / Netlify Edge | All     |                                |
+Out of scope (not exposed by the SATIM deployment; see [docs/ENDPOINTS.md](./docs/ENDPOINTS.md)):
 
-The package has no `node:` imports and no runtime dependencies: it needs
-only `fetch`, `TextEncoder`, `structuredClone` and `crypto.getRandomValues`,
-all of which every runtime above provides natively.
+- Card bindings and tokenized payments.
+- Wallet payments (Apple, Google, Samsung).
+- Recurring and installment payments.
+- 3-D Secure step handling. The hosted form owns it.
 
-## Install
+## 2. Runtime requirements
+
+Required globals: `fetch`, `AbortController`, `URL`, `URLSearchParams`, `TextEncoder`,
+`TextDecoder`, `structuredClone`, `crypto.getRandomValues`, `Response`.
+No `node:` imports. No polyfill or compatibility flag needed on any runtime below.
+
+| Runtime | Minimum | Notes |
+| - | - | - |
+| Node.js | 20 | `type: module` package, ESM only |
+| Bun | 1.0 | |
+| Deno | 1.28 | |
+| Cloudflare Workers | any | `nodejs_compat` NOT required |
+| Vercel / Netlify Edge | any | |
+
+## 3. Install
 
 ```bash
 npm install satim-sdk
-# or
 bun add satim-sdk
-# or
 pnpm add satim-sdk
 ```
 
-## Quick Start
+## 4. Quick start
 
 ```typescript
 import { Satim } from 'satim-sdk';
@@ -70,124 +60,197 @@ const satim = new Satim({
   terminalId: process.env.SATIM_TERMINAL_ID!,
 });
 
-// Register a payment
 const payment = await satim
-  .amount(1500)
+  .amount(1500)                                  // major units, whole dinars, >= 50
   .returnUrl('https://your-app.com/callback')
   .register();
 
-// Redirect the customer to the hosted payment page
-return payment.redirectResponse(); // standard Web API Response (302)
+return payment.redirectResponse();               // Web API Response, HTTP 302
 ```
 
-## Verifying a Payment
+Verification is server side and mandatory. Redirect query parameters are not proof of payment.
 
 ```typescript
 const response = await satim.confirm(orderId, expectedCartTotal);
 
-if (response.isSuccessful()) {
-  // Amount verification is automatic for successful payments
-  console.log(response.getSuccessMessage());
-} else if (response.isPending()) {
-  console.log('Payment not yet completed');
-} else if (response.isCancelled()) {
-  console.log('Customer cancelled the payment');
-} else if (response.isExpired()) {
-  console.log('Payment session expired');
-} else {
-  console.log(response.getErrorMessage());
-}
+if (response.isSuccessful()) { /* amount already verified, safe to fulfil */ }
+else if (response.isPending()) { /* still in flight, do not fulfil, poll later */ }
+else if (response.isPreAuthorized()) { /* funds held, call deposit() to capture */ }
+else { /* response.getErrorMessage() */ }
 ```
 
-## API
+## 5. Client API
 
-### Core Methods
+Base URL: `https://cib.satim.dz/payment/rest`. With `setTestMode(true)`:
+`https://test2.satim.dz/payment/rest`. Every call is a form encoded POST carrying
+`userName` and `password`.
 
-| Method                          | Endpoint                            | Returns             | Description                                                      |
-| ------------------------------- | ----------------------------------- | ------------------- | ---------------------------------------------------------------- |
-| `register()`                    | `/register.do`                      | `RegisterResponse`  | Register a payment order.                                        |
-| `confirm(orderId, amount)`      | `/public/acknowledgeTransaction.do` | `ConfirmResponse`   | Confirm and deposit a payment.                                   |
-| `status(orderId)`               | `/getOrderStatus.do`                | `ConfirmResponse`   | Query the current status of an order.                            |
-| `refund(orderId, amount)`       | `/refund.do`                        | `ConfirmResponse`   | Refund a captured payment.                                       |
-| `registerPreAuth()`             | `/registerPreAuth.do`               | `RegisterResponse`  | Hold funds without capturing.                                    |
-| `reverseOrder(orderId)`         | `/reverse.do`                       | `ConfirmResponse`   | Void a transaction before settlement.                            |
-| `deposit(orderId, amount?)`     | `/deposit.do`                       | `ConfirmResponse`   | Capture a pre-authorized order (omit amount for the full order). |
-| `decline(orderId, orderNumber)` | `/decline.do`                       | `ConfirmResponse`   | Cancel an order that was never paid.                             |
-| `statusExtended(orderId)`       | `/getOrderStatusExtended.do`        | `ConfirmResponse`   | Authoritative status; more detail than `status()`.               |
-| `checkCapabilities()`           | (probes several)                    | `SatimCapabilities` | Which operations this terminal is actually allowed to call.      |
+| Method | Endpoint | Mutating | Retried on transient failure | Returns |
+| - | - | - | - | - |
+| `register()` | `/register.do` | yes | only when an idempotency key is set | `RegisterResponse` |
+| `registerPreAuth()` | `/registerPreAuth.do` | yes | only when an idempotency key is set | `RegisterResponse` |
+| `safeRegister(ref)` | `/register.do` | yes | yes (key derived from `ref`) | `RegisterResponse` |
+| `safeRegisterPreAuth(ref)` | `/registerPreAuth.do` | yes | yes (key derived from `ref`) | `RegisterResponse` |
+| `confirm(orderId, expected)` | `/public/acknowledgeTransaction.do` | yes | no | `ConfirmResponse` |
+| `status(orderId)` | `/getOrderStatus.do` | no | yes | `ConfirmResponse` |
+| `statusExtended(orderId)` | `/getOrderStatusExtended.do` | no | yes | `ConfirmResponse` |
+| `statusAll(orderIds[])` | `/getOrderStatus.do` per id | no | yes | `ConfirmResponse[]` |
+| `deposit(orderId, amount?)` | `/deposit.do` | yes | no | `ConfirmResponse` |
+| `refund(orderId, amount)` | `/refund.do` | yes | no | `ConfirmResponse` |
+| `reverseOrder(orderId)` | `/reverse.do` | yes | no | `ConfirmResponse` |
+| `decline(orderId, orderNumber)` | `/decline.do` | yes | no | `ConfirmResponse` |
+| `checkCapabilities()` | probes 6 endpoints | no | no | `SatimCapabilities` |
+| `warmup()` | `/getOrderStatus.do` | no | no | `void`, never throws |
+| `createWebhookHandler(opts)` | local | no | n/a | `WebhookHandler` |
 
-### Configuration (Fluent Immutable API)
+Semantics that are not obvious from the signature:
 
-_The configuration is strictly immutable. Calling a setter returns a NEW instance._
+- `confirm()` calls `verifyAmount(expected)` on a successful response. There is no opt out.
+  It also rejects a settled `currency` that differs from the configured one.
+- `confirm()` acknowledges the transaction. It is a mutation, never retried, never
+  used on a replayed callback. Use `status()` to re-read.
+- `status()` does NOT verify the amount. Call `verifyAmount()` yourself before acting on it.
+- `deposit(orderId)` with no amount sends `amount=0`, which BPC reads as "capture the full order".
+- `decline()` cancels an order that was never paid, and requires the order number, not just the id.
+- `safeRegister(ref)` derives both the idempotency key and the order number from `ref`.
+  A gateway duplicate verdict (`ErrorCode 1`) is translated to `SatimDuplicateOrderError`;
+  recover with `status()` on the original order id.
 
-| Method                 | Description                                        |
-| ---------------------- | -------------------------------------------------- |
-| `amount(n)`            | Payment amount in major currency units (e.g. DZD). |
-| `returnUrl(url)`       | Redirect URL after payment.                        |
-| `failUrl(url)`         | Redirect URL on failure (defaults to `returnUrl`). |
-| `description(text)`    | Text shown on the payment page (max 600 chars).    |
-| `language(lang)`       | Payment page language: `"FR"`, `"AR"`, or `"EN"`.  |
-| `currency(code)`       | `"DZD"`, `"USD"`, or `"EUR"`.                      |
-| `orderNumber(n)`       | Custom order number, 1-10 alphanumeric chars.      |
-| `timeout(seconds)`     | Session timeout (600 – 86400).                     |
-| `userDefinedFields()`  | Custom metadata forwarded in `jsonParams`.         |
-| `dynamicCallbackUrl()` | Server-to-server webhook for status notifications. |
-| `setTestMode(bool)`    | Route requests to `test2.satim.dz`.                |
-| `allowPrivateUrls()`   | Permit loopback/private callback URLs (dev only).  |
+## 6. Configuration
 
-### Status Predicates (on `ConfirmResponse`)
+`SatimConfig` is immutable. Every setter clones the instance, mutates the clone, and
+returns it. A base instance is safe to share across concurrent requests.
 
-All predicates are **mutually exclusive**, at most one terminal-state predicate will return `true` for any given response.
+```typescript
+const base = new Satim(creds).setTestMode(true).language('FR');
+const a = base.amount(1500).returnUrl(urlA);   // base is unchanged
+const b = base.amount(9900).returnUrl(urlB);   // a is unchanged
+```
 
-| Method                  | Condition                                                                        |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `isSuccessful()`        | Authorized and captured (OrderStatus 2).                                         |
-| `isPending()`           | Still in flight, registered (0), 3-D Secure running (5), or pending payment (7). |
-| `isPreAuthorized()`     | Funds held, awaiting `deposit()` (OrderStatus 1).                                |
-| `isPartiallyCaptured()` | Part captured, more expected (OrderStatus 8).                                    |
-| `isReversed()`          | Authorization canceled (OrderStatus 3).                                          |
-| `isRefunded()`          | Refunded (OrderStatus 4).                                                        |
-| `isRejected()`          | Declined (OrderStatus 6, or a decline `actionCode`).                             |
-| `isCancelled()`         | Customer cancelled before completing.                                            |
-| `isExpired()`           | Session timed out (actionCode -2007).                                            |
-| `isFailed()`            | Catch-all: none of the above.                                                    |
+| Setter | Wire field | Constraint, violation throws `SatimInvalidArgumentError` |
+| - | - | - |
+| `amount(n)` | `amount` | number, finite, > 0, <= 9999999999.99, <= 2 decimals, >= 5000 centimes (50 DZD), multiple of 100 centimes |
+| `returnUrl(url)` | `returnUrl` | http/https, passes the SSRF guard |
+| `failUrl(url)` | `failUrl` | http/https, passes the SSRF guard. Defaults to `returnUrl` |
+| `description(text)` | `description` | string, <= 600 chars, no `<` or `>` |
+| `language(lang)` | `language` | `"FR"`, `"AR"`, `"EN"`. Default `"FR"` |
+| `currency(code)` | `currency` | `"DZD"` (012), `"USD"` (840), `"EUR"` (978). Default DZD |
+| `orderNumber(n)` | `orderNumber` | 1 to 10 alphanumeric chars (SATIM AN.10). Default: random 10 char base36 |
+| `timeout(seconds)` | `sessionTimeoutSecs` | integer, 600 to 86400 |
+| `userDefinedField(k, v)` | `jsonParams` | key non empty, non numeric, <= 128 chars, not reserved; value string <= 20 chars |
+| `userDefinedFields(obj)` | `jsonParams` | applies `userDefinedField` per entry |
+| `dynamicCallbackUrl(url)` | `dynamicCallbackUrl` | http/https, passes the SSRF guard |
+| `idempotencyKey(key)` | `externalRequestId` | 1 to 128 chars of `[A-Za-z0-9_-]` |
+| `setTestMode(bool)` | n/a | rebuilds the HTTP client unless a custom one was injected |
+| `allowPrivateUrls(bool)` | n/a | development only, see section 14 |
 
-### Response Accessors
+Reserved `jsonParams` keys, rejected at setter time: `force_terminal_id`, `__proto__`,
+`constructor`, `prototype`.
 
-Available on `RegisterResponse` or `ConfirmResponse`:
+Credential constraints, enforced in the `Satim` constructor: all three fields are strings,
+trimmed non empty; `username` and `password` <= 100 chars; `terminalId` <= 16 chars.
+Credentials cannot be re-set on an instance.
 
-| Method                | Available On     | Returns                                       |
-| --------------------- | ---------------- | --------------------------------------------- |
-| `getOrderId()`        | RegisterResponse | Order identifier                              |
-| `getUrl()`            | RegisterResponse | Hosted payment form URL                       |
-| `redirectResponse()`  | RegisterResponse | Web API 302 Response                          |
-| `getIpAddress()`      | ConfirmResponse  | Cardholder IP                                 |
-| `getCardHolderName()` | ConfirmResponse  | Name on card                                  |
-| `getCardExpiry()`     | ConfirmResponse  | Expiration (YYYYMM)                           |
-| `getCardPan()`        | ConfirmResponse  | Masked PAN                                    |
-| `getApprovalCode()`   | ConfirmResponse  | Issuer approval code                          |
-| `getAmount()`         | ConfirmResponse  | Payment amount captured                       |
-| `getOrderNumber()`    | ConfirmResponse  | Verified order number                         |
-| `verifyAmount(n)`     | ConfirmResponse  | Security assertion                            |
-| `getSuccessMessage()` | ConfirmResponse  | Localized success text                        |
-| `getErrorMessage()`   | ConfirmResponse  | Localized error text                          |
-| `getRawResponse()`    | Both             | Sanitized raw gateway response (PII redacted) |
+`register()` and `registerPreAuth()` additionally require `returnUrl` and `amount`.
+Missing either throws `SatimMissingDataError`.
 
-## Webhooks
+## 7. Responses
 
-SATIM does not sign its callbacks, so the handler ignores the payload and
-re-fetches authoritative state from the gateway on every invocation.
+### 7.1 RegisterResponse
+
+| Method | Returns | Notes |
+| - | - | - |
+| `getOrderId()` | `string` | gateway order id |
+| `getUrl()` | `string` | hosted form URL. Enforces HTTPS and a hostname in `{satim.dz, cib.satim.dz, test.satim.dz, test2.satim.dz}` |
+| `redirectResponse()` | `Response` | HTTP 302 to `getUrl()`, same allowlist |
+| `getRawResponse()` | `RegisterOrderResponse` | shallow copy, no PII fields exist on this payload |
+
+### 7.2 ConfirmResponse accessors
+
+| Method | Returns | Notes |
+| - | - | - |
+| `getAmount()` | `number \| undefined` | major units. `undefined` if non integer minor units or above `Number.MAX_SAFE_INTEGER` |
+| `getDepositAmount()` | `number \| undefined` | same rules, captured amount |
+| `getOrderNumber()` | `string \| undefined` | `OrderNumber` then `orderNumber` |
+| `getApprovalCode()` | `string \| undefined` | issuer approval code |
+| `getCardPan()` | `string \| undefined` | masked PAN |
+| `getCardHolderName()` | `string \| undefined` | |
+| `getCardExpiry()` | `string \| undefined` | `YYYYMM` |
+| `getIpAddress()` | `string \| undefined` | cardholder IP |
+| `getSuccessMessage()` | `string` | falls back to `getErrorMessage()` when not successful |
+| `getErrorMessage()` | `string` | |
+| `verifyAmount(expected)` | `void` | throws `SatimUnexpectedResponseError` on mismatch |
+| `getRawResponse()` | `Record<string, unknown>` | shallow copy with `Ip`, `Pan`, `cardholderName`, `expiration` replaced by `"[REDACTED]"` |
+
+### 7.3 Status predicates
+
+Exactly one of the ten predicates returns `true` for any well formed response.
+
+| Predicate | Condition |
+| - | - |
+| `isPending()` | `OrderStatus` in {`0` registered, `5` 3-D Secure running, `7` pending payment} |
+| `isPreAuthorized()` | `OrderStatus == 1`, funds held, awaiting `deposit()` |
+| `isSuccessful()` | `OrderStatus == 2`, authorized and captured |
+| `isReversed()` | `OrderStatus == 3`, authorization voided |
+| `isRefunded()` | `OrderStatus == 4` |
+| `isRejected()` | `OrderStatus == 6`, or no known status plus a decline signal (`actionCode` 2003 or 111, `params.respCode` not in {"", "00"}, or an English "payment is declined" message) |
+| `isPartiallyCaptured()` | `OrderStatus == 8`, multi part capture in progress |
+| `isExpired()` | no known status, `actionCode == -2007` |
+| `isCancelled()` | no known status, not expired, error signal present, `actionCode == 10` or an English "payment is cancelled" message |
+| `isFailed()` | catch all: no known status and none of the composites matched |
+
+`isPending()`, `isPreAuthorized()` and `isPartiallyCaptured()` are in flight states.
+Treating them as failure invites a merchant to cancel or re-charge a live order.
+
+## 8. Amount handling
+
+All gateway amounts are integer minor units (centimes). The SDK converts through one
+function, `toMinorUnits`, and never by ad hoc float arithmetic.
+
+| Rule | Value |
+| - | - |
+| Conversion | `Math.round(amount * 100)` behind a precision guard |
+| Precision guard | reject if `abs(amount*100 - round(amount*100)) > max(1e-7, abs(round(amount*100)) * 1e-13)` |
+| Upper bound | `MAX_SAFE_AMOUNT = 9999999999.99` |
+| Lower bound | result must be >= 1 minor unit |
+| Registration floor | 5000 minor units (50 DZD), SATIM rule |
+| Registration granularity | multiple of 100 minor units (whole dinars), SATIM rule |
+| Reverse conversion | `parseFloat((minor / 100).toFixed(2))`, `undefined` above `Number.MAX_SAFE_INTEGER` |
+| Gateway amount parsing | accepts `"5000"` and `"5000.00"`, rejects genuinely fractional minor units |
+
+`refund()` and `deposit()` use the general rule (>= 1 minor unit); the 50 DZD floor and
+whole dinar granularity apply to registration only.
+
+## 9. Idempotency
+
+```typescript
+const res = await satim.amount(1500).returnUrl(url).safeRegister('cart-42');
+```
+
+- `deriveIdempotencyKey({merchantRef, amount, currency, mode})` returns
+  `dk_<sha256 hex>` over `mode|merchantRef|minorUnits|currency`. Sent as `externalRequestId`.
+- `deriveOrderNumber(merchantRef, currency, mode)` returns 10 base36 chars over
+  `ordnum|mode|merchantRef|currency`. Space is 36^10; the 50 percent birthday point is
+  near 60 million derived references.
+- A change of amount or currency changes the key, so a re-priced cart is a new order.
+- Registration is retried on transient failure only when a key is present, because the
+  gateway then deduplicates instead of creating a second order.
+
+## 10. Webhooks
+
+SATIM delivers notifications as query parameters on `dynamicCallbackUrl`, keyed
+`mdOrder` (not `orderId`). Payloads are treated as untrusted: the handler uses them only
+to learn which order to re-read, then fetches authoritative state from the gateway.
 
 ```typescript
 const handler = satim.createWebhookHandler({
-  // If your merchant profile signs callbacks, pass the shared secret from
-  // your bank; otherwise you must opt in explicitly with
-  // allowUnverifiedCallbacks: true. One of the two is required.
+  // Exactly one of these two is required; constructing with neither throws.
   callbackSecret: process.env.SATIM_CALLBACK_SECRET,
-  // Your source of truth for what this order should cost.
+  // allowUnverifiedCallbacks: true,
+
   onResolveAmount: (orderId) => db.orders.findByGatewayId(orderId)?.totalDZD,
-  // Multi-instance deployments must make these atomic (Redis SETNX,
-  // INSERT ... ON CONFLICT DO NOTHING). The default is an in-memory Set.
+
+  // Multi instance deployments MUST back these with a shared atomic store.
   onCheckDuplicate: (orderId) => redis.exists(`satim:done:${orderId}`),
   onMarkProcessed: (orderId) => redis.set(`satim:done:${orderId}`, '1'),
 });
@@ -196,39 +259,47 @@ app.post('/satim/callback', async (req, res) => {
   const outcome = await handler.inspect(req.query);
 
   if (!outcome.verified) {
-    // Each reason needs a different answer. Returning 200 for
-    // `rate_limited` tells SATIM the callback was handled and it will
-    // never redeliver, a silently lost payment notification.
-    const status = {
+    // Status selection matters: 200 tells SATIM the callback was handled and it
+    // will never redeliver, which silently drops a real payment notification.
+    return res.sendStatus({
       invalid_source: 400,
       bad_signature: 400,
-      unknown_order: 404,
       rate_limited: 429,
-    }[outcome.reason];
-    return res.sendStatus(status);
+      unknown_order: 404,
+    }[outcome.reason]);
   }
 
-  const { response, duplicate } = outcome.result;
-  if (response.isSuccessful() && !duplicate)
-    await fulfilOrder(outcome.result.orderId);
+  const { orderId, response, duplicate } = outcome.result;
+  if (response.isSuccessful() && !duplicate) await fulfilOrder(orderId);
   res.sendStatus(200);
 });
 ```
 
-`verify(source)` is the simpler form, returning `WebhookResult | null`. It
-cannot distinguish the three rejection reasons, so prefer `inspect()`
-anywhere the HTTP status matters.
+| Option | Default | Constraint |
+| - | - | - |
+| `onResolveAmount` | required | returns expected major units, or nullish for an unknown order |
+| `callbackSecret` | none | required unless `allowUnverifiedCallbacks: true` |
+| `allowUnverifiedCallbacks` | `false` | required unless `callbackSecret` is set |
+| `onCheckDuplicate` | in memory `Set` | must be atomic with the mark step across instances |
+| `onMarkProcessed` | in memory `Set`, bounded at 10000 entries | |
+| `maxCallbacksPerWindow` | 100 | integer >= 1, per handler instance, counts all orders |
+| `rateLimitWindowMs` | 60000 | integer >= 1000 |
+| `suppressMultiInstanceWarning` | `false` | silences the in memory fallback warning |
 
-An order is only marked processed once it reaches a **terminal** state —
-deposited, refunded, or reversed. Pre-authorized holds, declines and
-expiries stay unmarked so that a later capture or a customer's successful
-card retry is still delivered as `duplicate: false` and gets fulfilled.
+- `inspect(source)` returns `{verified: true, result}` or `{verified: false, reason}` where
+  `reason` is `invalid_source`, `bad_signature`, `rate_limited`, or `unknown_order`.
+- `verify(source)` is the lossy form: it collapses all four rejections to `null`.
+  Prefer `inspect()` wherever the HTTP status matters.
+- An order is marked processed only on a terminal state: captured (2), refunded (4),
+  reversed (3). Pre-authorized holds, declines and expiries stay unmarked, so a later
+  capture or a successful card retry still arrives with `duplicate: false`.
+- A signature proves origin, not freshness. A replayed notification carries a valid one.
+  Both checks run; neither replaces the other.
 
-## Knowing what your terminal can do
+## 11. Terminal capabilities
 
-SATIM enables BPC's order-management operations per merchant, so `deposit`,
-`refund`, `reverse` and `decline` may each be deployed and still closed to
-you. Rather than finding out when a refund fails in production:
+BPC order management operations are enabled per merchant. `deposit`, `refund`, `reverse`
+and `decline` may be deployed on the gateway and still closed to your terminal.
 
 ```typescript
 const caps = await satim.checkCapabilities();
@@ -238,93 +309,116 @@ const caps = await satim.checkCapabilities();
 //                 reverse: 'not_permitted', decline: 'available' } }
 ```
 
-Each operation is probed with an order id that cannot exist, so nothing is
-mutated, the gateway can only answer with a permission verdict. If the
-credentials themselves are rejected, `credentialsValid` is `false` and every
-operation reads `unknown`, because a bad password denies everything and
-proves nothing about entitlement.
+Each operation is probed with an order id that cannot exist, so nothing is mutated; the
+gateway can only answer with a permission verdict. If the control probe shows the
+credentials are rejected, `credentialsValid` is `false` and every operation reads
+`unknown`, because a bad password denies everything and proves nothing about entitlement.
 
-Run it at startup or as a deployment smoke test, not per request.
+Run at startup or as a deployment smoke test. Six requests per call; not for the request path.
 
-If a gated operation is refused later anyway, the error says so rather than
-blaming your password, and points at this method.
+## 12. Errors
 
-## Error Handling
+Every error extends `SatimError`.
 
-All errors extend `SatimError` for unified catching:
+| Class | Raised when | Extra fields |
+| - | - | - |
+| `SatimMissingDataError` | required field not set (`returnUrl`, `amount`, `onResolveAmount`, callback secret choice) | |
+| `SatimInvalidArgumentError` | validation failure at a setter, or gateway `ErrorCode 6` (invalid order id) | |
+| `SatimInvalidCredentialsError` | HTTP 401/403, or gateway `ErrorCode 5`. On a permission gated endpoint the message says the terminal may simply not be entitled | |
+| `SatimGatewayError` | gateway `ErrorCode` 1, 3, 4, 7 | `errorCode`, `errorMessage` |
+| `SatimDuplicateOrderError` | `safeRegister` hit `ErrorCode 1` | `merchantRef` (sanitized) |
+| `SatimUnexpectedResponseError` | transport, parse, HTTP, circuit, or unclassified gateway failure | `errorCategory`, `isTimeout`, `httpStatus`, `gatewayErrorCode`, `gatewayErrorMessage` |
 
-```typescript
-import { SatimError, SatimGatewayError } from 'satim-sdk';
+`ErrorCode` mapping: `0` none, `1` duplicate order, `3` unknown currency, `4` missing
+parameter, `5` access denied, `6` invalid order id, `7` system error, anything else
+becomes `SatimUnexpectedResponseError` with `errorCategory: "gateway"`.
 
-try {
-  await satim.register();
-} catch (err) {
-  if (err instanceof SatimGatewayError) {
-    // Typed BPC gateway error with err.errorCode and err.errorMessage
-    // Code 1 = Duplicate order, 3 = Unknown currency,
-    // 4 = Missing parameter, 7 = System error
-  }
-  if (err instanceof SatimError) {
-    // SatimMissingDataError        - required field not set
-    // SatimInvalidArgumentError    - validation failure
-    // SatimInvalidCredentialsError - wrong username/password/terminal
-    // SatimUnexpectedResponseError - network or malformed response
-    // SatimGatewayError            - typed BPC gateway errors (1,3,4,7)
-  }
-}
-```
+`SatimErrorCategory` is `"network" | "timeout" | "parse" | "http" | "gateway" |
+"circuit_open" | "unknown"`. Gateway messages are stripped of non printable bytes and
+truncated to 200 characters before they reach any error message.
 
-## Security
+## 13. Transport
 
-The SDK ships with the following protections enabled by default:
+`new Satim(credentials, options)` accepts `HttpClientOptions` or an `HttpClientService` instance.
 
-- **Credential isolation**, Credentials live in a module-private `WeakMap` and never appear as enumerable properties. `JSON.stringify()` and `console.log()` automatically redact them. (The SATIM API requires credentials as POST form parameters on every request, make sure reverse proxies, WAFs, and APM tools do not log raw request bodies.)
-- **SSRF protection**, All URLs are validated against private IP ranges (IPv4/IPv6), cloud metadata endpoints, and non-standard IP encodings (decimal, octal, hex).
-- **Terminal-ID injection prevention**, `force_terminal_id` is always set by the SDK and cannot be overridden via `userDefinedFields`.
-- **IEEE 754-safe currency conversion**, Amounts are converted to minor units through a single guarded path (`Math.round(amount * 100)` behind a relative-epsilon precision check), never by ad-hoc float arithmetic. Amounts carrying sub-centime precision are rejected rather than silently rounded. The guard caps at ~10 billion major units.
-- **Safe retry policy**, `confirm`, `refund` and `reverseOrder` never retry on transient errors, preventing double-charges or double-refunds. Idempotent queries (`status`) always retry; `register`/`registerPreAuth` retry only when an idempotency key is set (as `safeRegister` does), because the gateway then deduplicates on it.
-- **Immutable API**, Every setter returns a new instance, preventing cross-request state leaks.
+| Option | Default | Constraint |
+| - | - | - |
+| `maxRetries` | 2 | clamped to 0 to 10 |
+| `timeoutMs` | 30000 | 1000 to 300000, per attempt |
+| `circuitBreaker` | `{failureThreshold: 5, resetTimeoutMs: 30000}` | `false` disables it |
+| `fetch` | `globalThis.fetch` | custom implementation, for example an undici `Pool` |
+| `baseUrl` | gateway URL for the current mode | must be HTTPS unless the host is private |
 
-### Best practices
+Behaviour:
 
-1. **Always verify server-side.** Never trust client-side redirect parameters. Use `confirm()` or `status()` to verify outcomes from your backend.
-2. **Always verify amounts.** Call `verifyAmount()` to detect partial-payment manipulation.
-3. **Use environment variables.** Never hardcode credentials. Load them from `process.env` or a secrets manager.
-4. **Never log request bodies.** Outgoing POST bodies contain credentials; ensure logging middleware excludes them.
-5. **Keep TLS valid.** Never set `NODE_TLS_REJECT_UNAUTHORIZED=0` in production.
+- Backoff is `500ms * 2^attempt` plus 0 to 50 percent jitter. Maximum total backoff at
+  defaults is about 2.25 seconds.
+- Retried: timeouts, connection level failures, HTTP 5xx. Never retried: HTTP 4xx,
+  malformed payloads, an open circuit.
+- Concurrent identical retryable requests are coalesced on a key of
+  `endpoint + sha256(form body)`. Non retryable calls are never coalesced.
+- Circuit breaker states are CLOSED, OPEN, HALF_OPEN. Five consecutive transient
+  failures open it; after 30 seconds one probe is admitted; success closes it, failure
+  re-opens it with a fresh timer. A probe whose outcome is never reported is treated as
+  abandoned after the reset timeout.
+- 4xx responses do not count toward opening the circuit. A local `NODE_TLS_REJECT_UNAUTHORIZED=0`
+  fault is checked before the breaker gate and counts as neither failure nor probe.
+- Response bodies are streamed with a hard 1 MiB cap.
+- Every request carries `Cache-Control: no-store, no-cache` and `Pragma: no-cache`.
 
-For the full threat model, see [`SECURITY.md`](./SECURITY.md).
+## 14. Security invariants
 
-## Documentation
+| ID | Invariant |
+| - | - |
+| S1 | Credentials live in a module private `WeakMap`. They are not own properties and never appear in `Object.keys`, `JSON.stringify`, `console.log`, or prototype traversal. Serializers return `[REDACTED]` |
+| S2 | `force_terminal_id` is stripped from caller supplied `jsonParams` and re-injected from the credential store on every registration |
+| S3 | All caller URLs are checked against private and reserved IPv4/IPv6 ranges, known internal hostnames, and non standard IP encodings (decimal, octal, hex) |
+| S4 | The hosted form URL is accepted only over HTTPS and only for a known `satim.dz` hostname, on both `getUrl()` and `redirectResponse()` |
+| S5 | Mutating calls (`confirm`, `deposit`, `refund`, `reverseOrder`, `decline`) are never retried |
+| S6 | `confirm()` verifies the settled amount and currency on success, with no opt out |
+| S7 | Requests are refused outright when `NODE_TLS_REJECT_UNAUTHORIZED=0` is set |
+| S8 | Callback checksums are verified with constant time comparison before any gateway call |
+| S9 | Callbacks with duplicate query keys are rejected, closing the parser differential replay |
+| S10 | PII (`Ip`, `Pan`, `cardholderName`, `expiration`) is redacted in `ConfirmResponse.getRawResponse()` |
 
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md), system topology, request lifecycle, technical constraints, state machine, predicate contract.
-- [`src/README.md`](./src/README.md), module map and dependency order.
-- [`src/responses/README.md`](./src/responses/README.md), response wrappers and the status predicate contract.
-- [`src/webhook/README.md`](./src/webhook/README.md), zero-trust verification flow and distributed deployment notes.
-- [`docs/ENDPOINTS.md`](./docs/ENDPOINTS.md), which SATIM endpoints are actually deployed, probed against the test gateway.
-- [`SECURITY.md`](./SECURITY.md), threat model, mitigations, known limitations.
-- **API reference**, generated locally with `npm run docs` (outputs to `docs/api/`).
+Operator requirements:
 
-## Development
+1. Verify server side. Redirect parameters are attacker controlled.
+2. Never log raw request or response bodies. Every POST body carries the merchant password.
+3. Load credentials from the environment or a secret manager, never from source.
+4. Keep TLS verification on. Never set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+5. In multi instance deployments, make the webhook duplicate check and mark atomic.
+
+`allowPrivateUrls(true)` disables the private range checks for that instance only. It
+still rejects obfuscated IP encodings, and validated private URLs are never cached.
+It is a development affordance; enabling it in production re-opens the SSRF surface.
+
+Full threat model and residual risks: [SECURITY.md](./SECURITY.md).
+
+## 15. Development
 
 ```bash
-bun install       # install dev dependencies
-bun test          # run the unit test suite (vitest)
-npm run typecheck # strict type checking (any runtime)
+bun install       # dev dependencies
+bun test          # unit suite (vitest)
+npm run typecheck # strict tsc, no emit
 npm run build     # compile to dist/
-npm run smoke     # load dist/ in plain Node and check the public API
-npm run docs      # generate TypeDoc API reference
+npm run smoke     # load dist/ in plain Node, assert the public surface
+npm run docs      # TypeDoc into docs/api/
 ```
 
-## Contributing
+## 16. Document map
 
-Contributions are welcome. Please open an issue first for anything beyond a small fix so we can align on scope. PRs should:
-
-1. Keep the zero-dependency rule intact.
-2. Pass `npm run typecheck` and the full test suite.
-3. Include tests for behavioral changes.
-4. Follow the existing immutable, fluent API style.
+| Document | Content |
+| - | - |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | layering, request lifecycle, invariants, state machines |
+| [SECURITY.md](./SECURITY.md) | threat model, controls, known limitations |
+| [docs/ENDPOINTS.md](./docs/ENDPOINTS.md) | probed endpoint inventory for the SATIM deployment |
+| [src/README.md](./src/README.md) | module map, dependency order, blast radius |
+| [src/responses/README.md](./src/responses/README.md) | response wrappers, predicate contract |
+| [src/webhook/README.md](./src/webhook/README.md) | callback verification flow |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | rules for changes |
+| [CHANGELOG.md](./CHANGELOG.md) | released and unreleased changes |
 
 ## License
 
-Released under the [MIT License](./LICENSE.md).
+MIT. See [LICENSE.md](./LICENSE.md).

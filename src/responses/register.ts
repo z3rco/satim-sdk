@@ -47,6 +47,6 @@ export class RegisterResponse {
     }
 
     public getRawResponse(): RegisterOrderResponse {
-        return { ...this._raw };
+        return structuredClone(this._raw);
     }
 }

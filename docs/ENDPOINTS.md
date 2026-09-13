@@ -1,92 +1,91 @@
-# SATIM endpoint inventory (probed against test2.satim.dz)
+# SATIM endpoint inventory
 
-Unauthenticated probes. A missing endpoint returns HTTP 404; a deployed
-one answers with a gateway error, so 404 is the only reliable 'absent'.
-Endpoint names are case-sensitive, lowercase spellings 404 even when the
+Probed against `test2.satim.dz`. Unauthenticated requests. A missing endpoint answers
+HTTP 404; a deployed one answers with a gateway error, so 404 is the only reliable signal
+for "absent". Endpoint names are case sensitive: a lowercase spelling 404s even when the
 camelCase one exists.
 
-## Present (19)
+Base path unless stated otherwise: `/payment/rest/`.
 
-- `bindCard.do`
-- `confirmOrder.do`
-- `createBindingNoPayment.do`
-- `decline.do`
-- `deposit.do`
-- `extendBinding.do`
-- `finish3ds.do`
-- `getBindings.do`
-- `getBindingsByCardOrId.do`
-- `getOrderStatus.do`
-- `getOrderStatusExtended.do`
-- `paymentOrderBinding.do`
-- `paymentorder.do`
-- `public/acknowledgeTransaction.do`
-- `refund.do`
-- `register.do`
-- `registerPreAuth.do`
-- `reverse.do`
-- `unBindCard.do`
+## 1. Present (19)
 
-## Absent, HTTP 404 (30)
+| Endpoint | Used by the SDK |
+| - | - |
+| `register.do` | `register()`, `safeRegister()` |
+| `registerPreAuth.do` | `registerPreAuth()`, `safeRegisterPreAuth()` |
+| `public/acknowledgeTransaction.do` | `confirm()` |
+| `getOrderStatus.do` | `status()`, `statusAll()`, `warmup()`, capability control probe |
+| `getOrderStatusExtended.do` | `statusExtended()` |
+| `deposit.do` | `deposit()` |
+| `refund.do` | `refund()` |
+| `reverse.do` | `reverseOrder()` |
+| `decline.do` | `decline()` |
+| `confirmOrder.do` | no |
+| `finish3ds.do` | no, the hosted form owns 3-D Secure |
+| `bindCard.do` | no |
+| `unBindCard.do` | no |
+| `extendBinding.do` | no |
+| `createBindingNoPayment.do` | no |
+| `getBindings.do` | no |
+| `getBindingsByCardOrId.do` | no |
+| `paymentOrderBinding.do` | no |
+| `paymentorder.do` | no |
 
-- `Finish3dsVer2Payment.do`
-- `acsRedirect.do`
-- `applepay_payment.do`
-- `applepay_paymentdirect.do`
-- `bindcard.do`
-- `cancel.do`
-- `continue.do`
-- `createttask_wheel.do`
-- `doesNotExist.do`
-- `extendbinding.do`
-- `finish3dsVer2Payment.do`
-- `getbindings.do`
-- `getbindingsbycardorid.do`
-- `gettask_wheel.do`
-- `google_payment.do`
-- `google_paymentdirect.do`
-- `installment_payment.do`
-- `instantPayment.do`
-- `instantRefund.do`
-- `instantpayment.do`
-- `motoPayment.do`
-- `motopayment.do`
-- `recurrent_payment.do`
-- `samsung_payment.do`
-- `samsung_paymentdirect.do`
-- `terminatetask_wheel.do`
-- `tokenpayment.do`
-- `unbindcard.do`
-- `verifyCard.do`
-- `verifycard.do`
+`deposit.do`, `refund.do`, `reverse.do` and `decline.do` are deployed but permission gated
+per merchant. Being present says nothing about your terminal being entitled to call them.
+Use `checkCapabilities()`.
 
-## Correction: paths outside `/payment/rest/`
+## 2. Absent, HTTP 404 (30)
 
-An earlier pass probed everything under `/payment/rest/` and marked the
-wallet, recurring and installment endpoints absent. That was wrong, BPC
-puts them under `/payment/` directly. Re-probed at their documented paths:
+```
+Finish3dsVer2Payment.do   acsRedirect.do            applepay_payment.do
+applepay_paymentdirect.do bindcard.do               cancel.do
+continue.do               createttask_wheel.do      doesNotExist.do
+extendbinding.do          finish3dsVer2Payment.do   getbindings.do
+getbindingsbycardorid.do  gettask_wheel.do          google_payment.do
+google_paymentdirect.do   installment_payment.do    instantPayment.do
+instantRefund.do          instantpayment.do         motoPayment.do
+motopayment.do            recurrent_payment.do      samsung_payment.do
+samsung_paymentdirect.do  terminatetask_wheel.do    tokenpayment.do
+unbindcard.do             verifyCard.do             verifycard.do
+```
 
-- `/payment/acsRedirect.do`, absent (404)
-- `/payment/recurrentPayment.do`, absent (404)
-- `/payment/installmentPayment.do`, absent (404)
-- `/payment/applepay/payment.do`, absent (404)
-- `/payment/applepay/paymentDirect.do`, absent (404)
-- `/payment/google/payment.do`, absent (404)
-- `/payment/google/paymentDirect.do`, absent (404)
-- `/payment/samsung/payment.do`, absent (404)
-- `/payment/samsung/paymentDirect.do`, absent (404)
-- `/payment/token/payment.do`, absent (404)
-- `/payment/industryPractice/paymentOrder.do`, absent (404)
-- `/payment/rest/3ds/continue.do`, absent (404)
+`doesNotExist.do` is the control: it confirms 404 is what an absent endpoint returns.
 
-So the conclusion survives the correction: SATIM does not expose wallet,
-recurring or installment payments, and the earlier verdict was right for
-the wrong reason. Endpoint names and path prefixes both matter.
+## 3. Paths outside `/payment/rest/`
 
-## Callback notifications
+An earlier pass probed only under `/payment/rest/` and recorded the wallet, recurring and
+installment endpoints as absent. That reasoning was wrong: BPC places them under
+`/payment/` directly. Re-probed at their documented paths, all absent (404):
 
-Notifications arrive as query parameters on `dynamicCallbackUrl`, e.g.
-`?mdOrder=…&orderNumber=…&operation=deposited&status=1`. Note `mdOrder`,
-not `orderId`. When the merchant profile is configured for signing they
-also carry `checksum` (HMAC-SHA256); see `callbackSecret` on
-`WebhookHandler`.
+```
+/payment/acsRedirect.do                    /payment/recurrentPayment.do
+/payment/installmentPayment.do             /payment/applepay/payment.do
+/payment/applepay/paymentDirect.do         /payment/google/payment.do
+/payment/google/paymentDirect.do           /payment/samsung/payment.do
+/payment/samsung/paymentDirect.do          /payment/token/payment.do
+/payment/industryPractice/paymentOrder.do  /payment/rest/3ds/continue.do
+```
+
+Conclusion holds after the correction: SATIM exposes no wallet, recurring, or installment
+payment. The earlier verdict was right for the wrong reason. Endpoint names and path
+prefixes both matter.
+
+## 4. Callback notifications
+
+Delivered as query parameters on `dynamicCallbackUrl`:
+
+```
+?mdOrder=<orderId>&orderNumber=<merchant order number>&operation=deposited&status=1
+```
+
+| Parameter | Note |
+| - | - |
+| `mdOrder` | the gateway order id. Not named `orderId` on this path |
+| `orderNumber` | the merchant order number sent at registration |
+| `operation` | for example `deposited` |
+| `status` | gateway delivered status flag, not `OrderStatus` |
+| `checksum` | present only when the merchant profile is configured for signing. HMAC-SHA256, see `callbackSecret` on `WebhookHandler` |
+
+The SDK reads only the order id from this payload and re-fetches authoritative state. The
+other parameters are informational and are not trusted.

@@ -69,6 +69,11 @@ export class HttpClientService {
     options?: HttpClientOptions,
   ) {
     const r = options?.maxRetries ?? HttpClientService.DEFAULT_MAX_RETRIES;
+    if (typeof r !== 'number' || !Number.isFinite(r)) {
+      throw new SatimInvalidArgumentError(
+        'maxRetries must be a finite number between 0 and 10.',
+      );
+    }
     this.maxRetries = Math.min(10, Math.max(0, Math.floor(r)));
 
     const t = options?.timeoutMs ?? HttpClientService.DEFAULT_TIMEOUT_MS;
@@ -86,7 +91,10 @@ export class HttpClientService {
     this.circuitBreaker =
       options?.circuitBreaker === false
         ? null
-        : new CircuitBreaker(options?.circuitBreaker);
+        : new CircuitBreaker({
+            probeTimeoutMs: (this.maxRetries + 1) * this.timeoutMs + 10_000,
+            ...options?.circuitBreaker,
+          });
     this.fetchImpl = options?.fetch;
     this.baseUrl = HttpClientService.normaliseBaseUrl(options?.baseUrl);
   }
@@ -106,12 +114,25 @@ export class HttpClientService {
         'baseUrl must be a valid http/https URL.',
       );
     }
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      throw new SatimInvalidArgumentError(
+        'baseUrl must not embed credentials, a query string, or a fragment.',
+      );
+    }
     if (parsed.protocol === 'http:' && !isPrivateHost(parsed.hostname)) {
       throw new SatimInvalidArgumentError(
         'baseUrl must use HTTPS for non-local hosts: every request body carries the merchant password.',
       );
     }
     return raw.replace(/\/+$/, '');
+  }
+
+  public getTestMode(): boolean {
+    return this.testMode;
+  }
+
+  public hasBaseUrlOverride(): boolean {
+    return this.baseUrl !== undefined;
   }
 
   public handleApiRequest<T = unknown>(
@@ -202,7 +223,7 @@ export class HttpClientService {
     const reader = response.body?.getReader();
     if (!reader) {
       const text = await response.text();
-      if (text.length > HttpClientService.MAX_RESPONSE_BYTES) {
+      if (new TextEncoder().encode(text).length > HttpClientService.MAX_RESPONSE_BYTES) {
         throw new SatimUnexpectedResponseError(
           'Response body exceeds the 1 MiB cap.',
           'parse',
@@ -280,9 +301,11 @@ export class HttpClientService {
           },
           body,
           signal: controller.signal,
+          redirect: 'manual',
         });
 
         if (!response.ok) {
+          void response.body?.cancel().catch(() => {});
           // acknowledgeTransaction.do reports bad creds as 401, register.do as errorCode 5; type both the same.
           if (response.status === 401 || response.status === 403) {
             throw new SatimInvalidCredentialsError(
