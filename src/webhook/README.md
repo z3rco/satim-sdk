@@ -4,7 +4,7 @@ Zero-trust callback handler for SATIM gateway notifications.
 
 ## Responsibility
 
-Receive a callback or redirect from SATIM and produce a server-verified `ConfirmResponse`. The callback payload is never trusted — every invocation triggers a server-to-server `satim.confirm()` against the real gateway, with automatic amount verification.
+Receive a callback or redirect from SATIM and produce a server-verified `ConfirmResponse`. The callback payload is never trusted, every invocation triggers a server-to-server `satim.confirm()` against the real gateway, with automatic amount verification.
 
 A signature and a re-fetch answer different questions, so the handler does both. `callbackSecret` enables HMAC-SHA256 `checksum` verification, which proves the notification came from the gateway; re-fetching live state proves it still reflects reality, which a replayed-but-validly-signed notification does not.
 
@@ -31,9 +31,9 @@ A signature and a re-fetch answer different questions, so the handler does both.
 1. **Extract** orderId via `extract.ts`. Invalid → `invalid_source`.
 2. **Rate limit** via the sliding window. Exceeded → `rate_limited`. Answer this with `429`/5xx so SATIM redelivers; answering `200` silently discards a real payment notification.
 3. **In-flight lock**. If another verification is already running for this `orderId`, await it and return `{ duplicate: true, response: <its response> }`. Otherwise acquire the lock for the duration of this call.
-4. **Duplicate check and expected amount** via `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)`, run in parallel — independent lookups. Unknown order (nullish amount) → `unknown_order`, without calling the gateway.
+4. **Duplicate check and expected amount** via `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)`, run in parallel, independent lookups. Unknown order (nullish amount) → `unknown_order`, without calling the gateway.
 5. **Server-to-server verification**. First-time callbacks call `satim.confirm(orderId, expectedAmount)`, which runs `verifyAmount()` automatically on success. Already-processed orders call `satim.status(orderId)` instead: both return authoritative live state, but `/public/acknowledgeTransaction.do` is a mutating acknowledgement that replays should not re-fire, and `status()` is idempotent so it retries and de-duplicates. The replay path re-asserts the amount explicitly.
-6. **Mark processed** via `onMarkProcessed(orderId)` only once the order reaches a terminal `OrderStatus` — deposited (`"2"`), refunded (`"4"`), or reversed (`"3"`).
+6. **Mark processed** via `onMarkProcessed(orderId)` only once the order reaches a terminal `OrderStatus`, deposited (`"2"`), refunded (`"4"`), or reversed (`"3"`).
 7. Release the in-flight lock in `finally`.
 
 ### Why marking is terminal-only

@@ -2,7 +2,7 @@ import { expect, test, describe } from "vitest";
 import { toMinorUnits, hasSubCentimePrecision, isWholeMinorUnits, MAX_SAFE_AMOUNT } from "../src/utils";
 import { ConfirmResponse } from "../src/responses";
 
-describe("toMinorUnits — IEEE 754 stress tests", () => {
+describe("toMinorUnits, IEEE 754 stress tests", () => {
     test("all known problematic IEEE 754 currency values convert correctly", () => {
         const cases: [number, number][] = [
             [0.01, 1], [0.02, 2], [0.03, 3], [0.04, 4], [0.05, 5],
@@ -76,7 +76,7 @@ describe("toMinorUnits — IEEE 754 stress tests", () => {
     });
 });
 
-describe("hasSubCentimePrecision — detection correctness", () => {
+describe("hasSubCentimePrecision, detection correctness", () => {
     test("returns false for exact 2-decimal values", () => {
         const exact = [0.01, 0.02, 0.05, 0.10, 0.25, 0.33, 0.50, 0.75, 0.99,
             1.00, 1.01, 1.50, 1.99, 10.10, 19.99, 100.00, 100.50, 999.99];
@@ -102,7 +102,7 @@ describe("hasSubCentimePrecision — detection correctness", () => {
     });
 });
 
-describe("isWholeMinorUnits — validation correctness", () => {
+describe("isWholeMinorUnits, validation correctness", () => {
     test("accepts valid positive integers", () => {
         expect(isWholeMinorUnits(1)).toBe(true);
         expect(isWholeMinorUnits(100)).toBe(true);
@@ -119,7 +119,7 @@ describe("isWholeMinorUnits — validation correctness", () => {
     });
 });
 
-describe("getAmount — minor-to-major round trip", () => {
+describe("getAmount, minor-to-major round trip", () => {
     test("small minor units convert correctly", () => {
         const cases: [number, number][] = [
             [1, 0.01], [3, 0.03], [7, 0.07], [10, 0.10], [33, 0.33],
@@ -163,7 +163,7 @@ describe("getAmount — minor-to-major round trip", () => {
     });
 });
 
-describe("verifyAmount — strict comparison", () => {
+describe("verifyAmount, strict comparison", () => {
     test("matches when gateway and expected amounts agree", () => {
         const cases: [string, number][] = [
             ["1", 0.01], ["100", 1.00], ["1999", 19.99],
@@ -209,7 +209,7 @@ describe("verifyAmount — strict comparison", () => {
     });
 });
 
-describe("MAX_SAFE_AMOUNT — boundary precision", () => {
+describe("MAX_SAFE_AMOUNT, boundary precision", () => {
     test("MAX_SAFE_AMOUNT is exactly 9_999_999_999.99", () => {
         expect(MAX_SAFE_AMOUNT).toBe(9_999_999_999.99);
     });

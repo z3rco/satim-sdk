@@ -222,7 +222,7 @@ def main(argv: list[str]) -> int:
         print(f"  {f}: {removed} comments removed, {saved} bytes")
         if in_place and stripped != original:
             f.write_text(stripped)
-    print(f"\n{total_removed} comments removed" + ("" if in_place else " (dry run — pass --in-place to apply)"))
+    print(f"\n{total_removed} comments removed" + ("" if in_place else " (dry run, pass --in-place to apply)"))
     return 0
 
 

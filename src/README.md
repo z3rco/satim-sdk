@@ -4,11 +4,11 @@ Source root for the SATIM SDK. See [`ARCHITECTURE.md`](../ARCHITECTURE.md) for s
 
 ## Responsibility
 
-Implement the SATIM REST client, gateway response wrappers, immutable fluent configuration, and zero-trust webhook handler. No runtime dependencies and no `node:` imports — the package relies only on Web-standard globals, so it loads unmodified on edge runtimes.
+Implement the SATIM REST client, gateway response wrappers, immutable fluent configuration, and zero-trust webhook handler. No runtime dependencies and no `node:` imports, the package relies only on Web-standard globals, so it loads unmodified on edge runtimes.
 
 ## Module map
 
-Files are listed in dependency order — each module only imports from those above it.
+Files are listed in dependency order, each module only imports from those above it.
 
 | Module | Responsibility |
 |--------|----------------|
@@ -54,7 +54,7 @@ No `package.json` runtime dependencies are declared. `devDependencies` cover the
 
 | Editing here | Potentially affects |
 |--------------|---------------------|
-| `exceptions.ts` | All callers — every method throws subclasses of `SatimError`. |
+| `exceptions.ts` | All callers, every method throws subclasses of `SatimError`. |
 | `types.ts` | Public API surface. Breaking changes require coordinated updates in `config.ts`, `responses/`, `Satim.ts`. |
 | `money.ts` | Currency arithmetic correctness across `validation.ts`, `Satim.ts`, `responses/confirm.ts`, `idempotency.ts`. Adversarial tests in `tests/math-precision.test.ts` and `tests/adversarial.test.ts` cover the boundary. |
 | `ssrf.ts` | URL acceptance policy for `returnUrl`, `failUrl`, `dynamicCallbackUrl`. Tightening rules may reject inputs that previously passed. |

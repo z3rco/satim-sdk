@@ -8,9 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
-- **Webhook handler now requires an explicit choice about unsigned callbacks.** Pass `callbackSecret` to verify signed callbacks, or `allowUnverifiedCallbacks: true` to accept unsigned ones (guarded only by live re-fetch and amount verification). Constructing a handler with neither now throws — a breaking change made deliberately so the insecure mode is never the silent default.
+- **Webhook handler now requires an explicit choice about unsigned callbacks.** Pass `callbackSecret` to verify signed callbacks, or `allowUnverifiedCallbacks: true` to accept unsigned ones (guarded only by live re-fetch and amount verification). Constructing a handler with neither now throws, a breaking change made deliberately so the insecure mode is never the silent default.
 - **Closed a callback parser differential.** `extractOrderId` took the first duplicate query value while `extractParams` took the last, so a signed callback for order B could be replayed as `?orderId=VICTIM&orderId=B`. Any callback with duplicate query keys is now rejected.
-- **`getUrl()` enforces the same HTTPS + `satim.dz` allowlist as `redirectResponse()`** — merchants redirecting from `getUrl()` no longer silently lose the open-redirect protection.
+- **`getUrl()` enforces the same HTTPS + `satim.dz` allowlist as `redirectResponse()`**, merchants redirecting from `getUrl()` no longer silently lose the open-redirect protection.
 - **SSRF guard extended:** CGNAT `100.64.0.0/10` (incl. cloud metadata `100.100.100.200`), `198.18.0.0/15`, multicast `224.0.0.0/4`, reserved `240.0.0.0/4`, trailing-dot hostnames, and IPv6 6to4/Teredo.
 - **Response body is capped at 1 MiB**, streamed, so a hostile endpoint (reachable only via a custom `baseUrl`) cannot exhaust memory.
 - **`merchantRef` is sanitized** before interpolation into `SatimDuplicateOrderError`, closing terminal/log escape-sequence injection.
@@ -20,7 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Webhook: paid orders could be left unfulfilled.** Orders were marked processed whenever the response was not `isPending()`, which wrongly covered pre-authorized holds and declined attempts. A pre-auth capture, or a customer's successful card retry after a decline, then arrived as `duplicate: true` and callers were told not to fulfil it. Marking now requires a terminal `OrderStatus` — deposited, refunded, or reversed.
+- **Webhook: paid orders could be left unfulfilled.** Orders were marked processed whenever the response was not `isPending()`, which wrongly covered pre-authorized holds and declined attempts. A pre-auth capture, or a customer's successful card retry after a decline, then arrived as `duplicate: true` and callers were told not to fulfil it. Marking now requires a terminal `OrderStatus`, deposited, refunded, or reversed.
 - **Circuit breaker ignored the most common outage.** Connection-level failures (DNS, ECONNREFUSED, TLS) and malformed payloads reported nothing to the breaker, so it never opened on them. Every transport failure mode is now counted; 4xx responses deliberately are not.
 - **Circuit breaker could wedge permanently.** A `HALF_OPEN` probe that failed through an unreported path left `probeInFlight` set, and the breaker rejected every subsequent request for the life of the process with no timer able to recover it. All request paths now report an outcome, and an unreported probe is treated as abandoned after `resetTimeoutMs`.
 - **Timeouts were misclassified under a custom `fetch`.** Abort detection used `instanceof DOMException`, so a custom `fetch` (the documented undici `Pool` path) rejecting with a plain `Error` named `AbortError` was reported as a generic network error, losing `isTimeout` and skipping retries. Detection is now by error `name`.
@@ -58,7 +58,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `RegisterResponse` and `ConfirmResponse` typed wrappers with full status predicate set
 - Zero-trust webhook handler that re-verifies every callback server-to-server against the gateway (SATIM does not sign callbacks), with replay protection and rate limiting
 - SSRF protection against private IP ranges, cloud metadata endpoints, and non-standard IP encodings
-- Credential isolation via module-private `WeakMap` — credentials never appear in `JSON.stringify()` or `console.log()` output
+- Credential isolation via module-private `WeakMap`, credentials never appear in `JSON.stringify()` or `console.log()` output
 - IEEE 754-safe minor-unit conversion with sub-centime rejection
 - Circuit breaker for transient failure isolation
 - Full TypeScript strict-mode coverage with zero runtime dependencies

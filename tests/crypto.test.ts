@@ -12,7 +12,7 @@ import { sha256Hex, randomOrderNumber, hexToBase36, ORDER_NUMBER_LENGTH } from "
 
 const reference = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 
-describe("sha256Hex — differential against node:crypto", () => {
+describe("sha256Hex, differential against node:crypto", () => {
     test("matches on the FIPS 180-4 sample vectors", () => {
         expect(sha256Hex("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         expect(sha256Hex("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");

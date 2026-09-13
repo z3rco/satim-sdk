@@ -60,7 +60,7 @@ function baseConfig() {
 
 // ─── Test suites ─────────────────────────────────────────────────────────────
 
-describeSandbox("Integration — register()", () => {
+describeSandbox("Integration, register()", () => {
     test("registers a new order and returns a formUrl", async () => {
         const response = await baseConfig().register();
 
@@ -84,11 +84,11 @@ describeSandbox("Integration — register()", () => {
         const fixedOrderNumber = "1234567890";
         const config = baseConfig().orderNumber(fixedOrderNumber);
 
-        // First registration may succeed or may already exist — either outcome is valid.
+        // First registration may succeed or may already exist, either outcome is valid.
         try {
             await config.register();
         } catch {
-            // Order may already exist from a previous test run — that's fine.
+            // Order may already exist from a previous test run, that's fine.
         }
 
         // Second registration with the same orderNumber must be rejected.
@@ -96,7 +96,7 @@ describeSandbox("Integration — register()", () => {
     });
 });
 
-describeSandbox("Integration — status()", () => {
+describeSandbox("Integration, status()", () => {
     test("returns a ConfirmResponse for a known order", async () => {
         const { orderId } = (await baseConfig().register()).getRawResponse();
         const status = await satim.setTestMode(true).status(orderId);
@@ -114,19 +114,19 @@ describeSandbox("Integration — status()", () => {
     });
 });
 
-describeSandbox("Integration — confirm()", () => {
+describeSandbox("Integration, confirm()", () => {
     test("confirm() on a pending order returns a non-successful response", async () => {
         const reg = await baseConfig().register();
         const orderId = reg.getOrderId();
 
-        // The order has not been paid — confirm should return a non-successful terminal state
+        // The order has not been paid, confirm should return a non-successful terminal state
         // (rejected, expired, or still pending depending on gateway behavior).
         const response = await satim.setTestMode(true).confirm(orderId, 100);
         expect(response.isSuccessful()).toBe(false);
     });
 });
 
-describeSandbox("Integration — safeRegister()", () => {
+describeSandbox("Integration, safeRegister()", () => {
     test("safeRegister() with the same merchantRef returns consistent orderId", async () => {
         const merchantRef = `test-ref-${Date.now()}`;
 
@@ -142,7 +142,7 @@ describeSandbox("Integration — safeRegister()", () => {
         // Register with amount 100
         await baseConfig().amount(100).safeRegister(merchantRef);
 
-        // Re-register with a different amount — derives a different idempotency key,
+        // Re-register with a different amount, derives a different idempotency key,
         // but the same order number → SATIM should reject with ErrorCode 1.
         await expect(
             baseConfig().amount(200).safeRegister(merchantRef),
@@ -150,7 +150,7 @@ describeSandbox("Integration — safeRegister()", () => {
     });
 });
 
-describeSandbox("Integration — invalid credentials", () => {
+describeSandbox("Integration, invalid credentials", () => {
     test("rejects bad credentials with SatimInvalidCredentialsError", async () => {
         const bad = new Satim(
             { username: "bad", password: "creds", terminalId: "0000" },
@@ -161,7 +161,7 @@ describeSandbox("Integration — invalid credentials", () => {
     });
 });
 
-describeSandbox("Integration — circuit breaker", () => {
+describeSandbox("Integration, circuit breaker", () => {
     test("circuit breaker opens after repeated credential failures", async () => {
         // Use bad credentials to force transient-style gateway errors.
         // We use a very low threshold so the breaker trips quickly.
@@ -178,9 +178,9 @@ describeSandbox("Integration — circuit breaker", () => {
     });
 });
 
-describeSandbox("Integration — configurable timeout", () => {
+describeSandbox("Integration, configurable timeout", () => {
     test("accepts a custom timeoutMs without throwing", async () => {
-        // Just verify the SDK accepts and uses the custom timeout — a 60s timeout
+        // Just verify the SDK accepts and uses the custom timeout, a 60s timeout
         // should not affect normal sandbox latency.
         const customSatim = new Satim(CREDS, { timeoutMs: 60_000 });
         const response = await customSatim

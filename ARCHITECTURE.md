@@ -24,12 +24,12 @@ A `register()` call traverses every layer once:
 
 1. Caller chains fluent setters on `Satim`. Each setter clones the config, mutates the clone, returns it. The original is never modified.
 2. `register()` calls `validateForRegister` (asserts `returnUrl` and `amount` are set), then `getFinalOrderNumber` (uses the configured order number or generates a random 10-character base-36 one from `crypto.getRandomValues`).
-3. `buildData` assembles the form payload. It strips `force_terminal_id` from user-defined fields and always sets it from the credential store — user input cannot override the terminal binding.
+3. `buildData` assembles the form payload. It strips `force_terminal_id` from user-defined fields and always sets it from the credential store, user input cannot override the terminal binding.
 4. `httpClientService.handleApiRequest` runs the request. Retries are enabled iff an `externalRequestId` (idempotency key) is set.
 5. `assertTlsSafe` aborts if `NODE_TLS_REJECT_UNAUTHORIZED=0` is in the environment. This runs before the breaker gate so a configuration fault never consumes a `HALF_OPEN` probe.
 6. The circuit breaker is consulted. If `OPEN` and the reset timeout has not elapsed, the call throws `SatimUnexpectedResponseError` with `errorCategory: "circuit_open"`.
 7. `fetch` POSTs `application/x-www-form-urlencoded`. Anti-caching headers are set on every request because POST bodies carry credentials.
-8. On any transient failure — 5xx, timeout, connection failure, malformed payload — the breaker records a failure. Retryable ones (everything but malformed payloads) go round the loop again with exponential backoff (`500ms × 2^attempt`, plus 0–50% jitter).
+8. On any transient failure, 5xx, timeout, connection failure, malformed payload, the breaker records a failure. Retryable ones (everything but malformed payloads) go round the loop again with exponential backoff (`500ms × 2^attempt`, plus 0–50% jitter).
 9. The response body is parsed. `validateApiResponse` maps `ErrorCode` to typed exceptions (see [Error classification](#error-classification)).
 10. The JSON is passed to `new RegisterResponse(raw)`. Its constructor runs `validateRegisterSchema` and then `structuredClone`s the payload into the instance.
 
@@ -50,7 +50,7 @@ Complexity: all currency operations are `O(1)`.
 
 ### Credential isolation
 
-Credentials are stored in a module-private `WeakMap<SatimConfig, Creds>` declared inside `config.ts`. The mapping is unreachable from outside the module — there is no exported accessor. Consequences:
+Credentials are stored in a module-private `WeakMap<SatimConfig, Creds>` declared inside `config.ts`. The mapping is unreachable from outside the module, there is no exported accessor. Consequences:
 
 - `Object.keys(satim)`, `Reflect.ownKeys(satim)`, `JSON.stringify(satim)`, and prototype traversal never expose credentials.
 - `toJSON()`, `Symbol.for("nodejs.util.inspect.custom")`, and `Symbol.toPrimitive` all return `[REDACTED]` placeholders for the credential fields.
@@ -72,7 +72,7 @@ The SATIM API requires credentials in the POST body of every request. The SDK ca
 
 Validated URLs are cached in a bounded `Set` (max 512) to amortise the cost across hot paths. The cache evicts the oldest entry on overflow.
 
-**Known limitation:** validation occurs at configuration time only. The SDK does not re-resolve DNS at request time, so a host that resolved to a public IP during validation could later resolve to a private IP via DNS rebinding. The SDK itself does not fetch these URLs — they are forwarded to SATIM for callback delivery — so the risk transfers to the callback endpoint operator.
+**Known limitation:** validation occurs at configuration time only. The SDK does not re-resolve DNS at request time, so a host that resolved to a public IP during validation could later resolve to a private IP via DNS rebinding. The SDK itself does not fetch these URLs, they are forwarded to SATIM for callback delivery, so the risk transfers to the callback endpoint operator.
 
 ### Circuit breaker
 
@@ -119,12 +119,12 @@ Backoff is exponential with 0–50% jitter: `BASE_RETRY_DELAY_MS × 2^attempt + 
 The handler treats the callback payload as untrusted and re-fetches authoritative state. When `callbackSecret` is set it also verifies the notification's `checksum` (HMAC-SHA256) first, rejecting forgeries before any gateway call:
 
 1. Extract `orderId` from the source (string, URL, Web `Request`, or object). Reject anything that fails the strict `[a-zA-Z0-9\-]{1,128}` format.
-2. Apply rate limit. If the sliding window is full, reject with `rate_limited`. `inspect()` surfaces that reason so the caller can answer `429` and have SATIM redeliver; `verify()` collapses it to `null`, which an unwary caller answers `200` — silently dropping a real payment notification.
+2. Apply rate limit. If the sliding window is full, reject with `rate_limited`. `inspect()` surfaces that reason so the caller can answer `429` and have SATIM redeliver; `verify()` collapses it to `null`, which an unwary caller answers `200`, silently dropping a real payment notification.
 3. Acquire the per-`orderId` in-flight lock. Concurrent calls for the same order wait on the first; the lock prevents the check-then-mark race within a single process.
-4. Call `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)` in parallel — independent lookups, typically both hitting the merchant's database. An unknown order (nullish amount) returns without touching the gateway.
-5. Fetch authoritative state. A first-time callback uses `satim.confirm(orderId, expectedAmount)`, which runs `verifyAmount()` automatically on success. An already-processed order uses `satim.status(orderId)` instead — both return live state, but `/public/acknowledgeTransaction.do` is a mutating acknowledgement and replays must not re-fire it. The replay path re-asserts the amount explicitly.
-6. If the response reached a **terminal** `OrderStatus` — deposited (`"2"`), refunded (`"4"`), reversed (`"3"`) — call `onMarkProcessed(orderId)`. Every other state stays unmarked.
-7. Marking is one-way: later callbacks for a marked order return `duplicate: true`, which callers are told not to fulfil. So the test is "definitely finished", not "not pending". A pre-authorized hold (`"1"`) still has a capture to come, and a declined attempt (no `OrderStatus` at all) may still be followed by a successful card retry on the same order — marking either would leave a paid customer unfulfilled.
+4. Call `onCheckDuplicate(orderId)` and `onResolveAmount(orderId)` in parallel, independent lookups, typically both hitting the merchant's database. An unknown order (nullish amount) returns without touching the gateway.
+5. Fetch authoritative state. A first-time callback uses `satim.confirm(orderId, expectedAmount)`, which runs `verifyAmount()` automatically on success. An already-processed order uses `satim.status(orderId)` instead, both return live state, but `/public/acknowledgeTransaction.do` is a mutating acknowledgement and replays must not re-fire it. The replay path re-asserts the amount explicitly.
+6. If the response reached a **terminal** `OrderStatus`, deposited (`"2"`), refunded (`"4"`), reversed (`"3"`), call `onMarkProcessed(orderId)`. Every other state stays unmarked.
+7. Marking is one-way: later callbacks for a marked order return `duplicate: true`, which callers are told not to fulfil. So the test is "definitely finished", not "not pending". A pre-authorized hold (`"1"`) still has a capture to come, and a declined attempt (no `OrderStatus` at all) may still be followed by a successful card retry on the same order, marking either would leave a paid customer unfulfilled.
 
 A signature and a re-fetch answer different questions, so the handler does both. A valid signature proves the payload was issued by the gateway; it does not prove the payload reflects current state, and a replayed notification carries a perfectly valid one. Only live re-verification settles that.
 
@@ -132,7 +132,7 @@ A signature and a re-fetch answer different questions, so the handler does both.
 
 ### Terminal ID injection
 
-`buildData()` strips `force_terminal_id` from user-supplied `jsonParams` before re-injecting the credential-store value. The validator in `validation.ts:assertUserField` also rejects `force_terminal_id` (along with `__proto__`, `constructor`, `prototype`) at setter time. Both defences are kept — defence in depth — because the validator could be bypassed by a caller constructing the user-fields object directly without going through `userDefinedField`.
+`buildData()` strips `force_terminal_id` from user-supplied `jsonParams` before re-injecting the credential-store value. The validator in `validation.ts:assertUserField` also rejects `force_terminal_id` (along with `__proto__`, `constructor`, `prototype`) at setter time. Both defences are kept, defence in depth, because the validator could be bypassed by a caller constructing the user-fields object directly without going through `userDefinedField`.
 
 ## State and data models
 
@@ -154,7 +154,7 @@ nine map to exactly one predicate on `ConfirmResponse`:
 | `8` | Intermediate multi-part capture | `isPartiallyCaptured()` |
 
 `5`, `7` and `8` are in-flight states. Reporting any of them as failed —
-which the SDK did before these values were handled — invites a merchant to
+which the SDK did before these values were handled, invites a merchant to
 cancel or re-charge an order that is still moving.
 
 Capture is `/deposit.do`, not `confirm()`. `confirm()` acknowledges a
@@ -186,7 +186,7 @@ The dependency chain is acyclic. Composites call leaves; `isFailed` calls all ei
 Every setter on `SatimConfig` (and on `Satim` by extension) calls `clone()`, mutates the clone, and returns it. The original instance is never modified. Two consequences:
 
 - Concurrent callers can share a base `Satim` instance safely.
-- Mistakenly returning the original instead of the clone would create a state leak. The `clone()` implementation uses `Object.create(Object.getPrototypeOf(this))` and assigns each field explicitly — not `Object.assign` — so subclasses (notably `Satim`) can override `clone()` to copy their own additional fields (`httpClientService`, `_hasCustomHttpClient`, `_httpClientOptions`) without risk of `Object.assign` copying internal state from the wrong source.
+- Mistakenly returning the original instead of the clone would create a state leak. The `clone()` implementation uses `Object.create(Object.getPrototypeOf(this))` and assigns each field explicitly, not `Object.assign`, so subclasses (notably `Satim`) can override `clone()` to copy their own additional fields (`httpClientService`, `_hasCustomHttpClient`, `_httpClientOptions`) without risk of `Object.assign` copying internal state from the wrong source.
 
 ### Error classification
 
@@ -194,15 +194,15 @@ Every setter on `SatimConfig` (and on `Satim` by extension) calls `clone()`, mut
 
 | `ErrorCode` | Exception | Catchable as |
 |-------------|-----------|--------------|
-| `0` | (no error) | — |
-| `1` | `SatimGatewayError` | `errorCode === "1"` (duplicate order — used to detect idempotency conflicts in `safeRegister`) |
+| `0` | (no error) |, |
+| `1` | `SatimGatewayError` | `errorCode === "1"` (duplicate order, used to detect idempotency conflicts in `safeRegister`) |
 | `3` | `SatimGatewayError` | `errorCode === "3"` (unknown currency) |
 | `4` | `SatimGatewayError` | `errorCode === "4"` (missing parameter) |
-| `5` | `SatimInvalidCredentialsError` | — |
-| `6` | `SatimInvalidArgumentError` | — |
+| `5` | `SatimInvalidCredentialsError` |, |
+| `6` | `SatimInvalidArgumentError` |, |
 | `7` | `SatimGatewayError` | `errorCode === "7"` (system error) |
 | any other non-zero | `SatimUnexpectedResponseError` | `errorCategory: "gateway"` |
 
 All exceptions extend `SatimError`. Gateway messages are sanitised (truncated to 200 characters, non-printable bytes stripped) before being placed in error messages.
 
-`SatimUnexpectedResponseError` exposes only a safe `errorCategory` enum (`"network" | "timeout" | "parse" | "http" | "gateway" | "circuit_open" | "unknown"`). Raw error messages, stack traces, and system codes are not retained — error reporters cannot accidentally leak request URLs or form bodies via this class.
+`SatimUnexpectedResponseError` exposes only a safe `errorCategory` enum (`"network" | "timeout" | "parse" | "http" | "gateway" | "circuit_open" | "unknown"`). Raw error messages, stack traces, and system codes are not retained, error reporters cannot accidentally leak request URLs or form bodies via this class.

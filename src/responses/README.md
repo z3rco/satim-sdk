@@ -47,7 +47,7 @@ Adding a tenth predicate requires updating the exclusion list of every predicate
 - Converts `expectedAmount` to minor units via `toMinorUnits` (the same IEEE-754-safe pipeline used at registration).
 - Compares minor-unit integers. Mismatch throws `SatimUnexpectedResponseError` with the expected and actual values.
 
-`Satim.confirm()` calls this automatically on `isSuccessful()` responses — there is no way for a caller to skip it.
+`Satim.confirm()` calls this automatically on `isSuccessful()` responses, there is no way for a caller to skip it.
 
 ## PII redaction
 
@@ -58,7 +58,7 @@ Adding a tenth predicate requires updating the exclusion list of every predicate
 - `cardholderName`
 - `expiration`
 
-Typed accessors (`getCardPan`, `getCardHolderName`, `getCardExpiry`, `getIpAddress`) return the unredacted values — callers that need them must request them explicitly.
+Typed accessors (`getCardPan`, `getCardHolderName`, `getCardExpiry`, `getIpAddress`) return the unredacted values, callers that need them must request them explicitly.
 
 ## Impact of changes
 

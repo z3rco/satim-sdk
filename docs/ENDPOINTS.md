@@ -2,7 +2,7 @@
 
 Unauthenticated probes. A missing endpoint returns HTTP 404; a deployed
 one answers with a gateway error, so 404 is the only reliable 'absent'.
-Endpoint names are case-sensitive — lowercase spellings 404 even when the
+Endpoint names are case-sensitive, lowercase spellings 404 even when the
 camelCase one exists.
 
 ## Present (19)
@@ -27,7 +27,7 @@ camelCase one exists.
 - `reverse.do`
 - `unBindCard.do`
 
-## Absent — HTTP 404 (30)
+## Absent, HTTP 404 (30)
 
 - `Finish3dsVer2Payment.do`
 - `acsRedirect.do`
@@ -63,21 +63,21 @@ camelCase one exists.
 ## Correction: paths outside `/payment/rest/`
 
 An earlier pass probed everything under `/payment/rest/` and marked the
-wallet, recurring and installment endpoints absent. That was wrong — BPC
+wallet, recurring and installment endpoints absent. That was wrong, BPC
 puts them under `/payment/` directly. Re-probed at their documented paths:
 
-- `/payment/acsRedirect.do` — absent (404)
-- `/payment/recurrentPayment.do` — absent (404)
-- `/payment/installmentPayment.do` — absent (404)
-- `/payment/applepay/payment.do` — absent (404)
-- `/payment/applepay/paymentDirect.do` — absent (404)
-- `/payment/google/payment.do` — absent (404)
-- `/payment/google/paymentDirect.do` — absent (404)
-- `/payment/samsung/payment.do` — absent (404)
-- `/payment/samsung/paymentDirect.do` — absent (404)
-- `/payment/token/payment.do` — absent (404)
-- `/payment/industryPractice/paymentOrder.do` — absent (404)
-- `/payment/rest/3ds/continue.do` — absent (404)
+- `/payment/acsRedirect.do`, absent (404)
+- `/payment/recurrentPayment.do`, absent (404)
+- `/payment/installmentPayment.do`, absent (404)
+- `/payment/applepay/payment.do`, absent (404)
+- `/payment/applepay/paymentDirect.do`, absent (404)
+- `/payment/google/payment.do`, absent (404)
+- `/payment/google/paymentDirect.do`, absent (404)
+- `/payment/samsung/payment.do`, absent (404)
+- `/payment/samsung/paymentDirect.do`, absent (404)
+- `/payment/token/payment.do`, absent (404)
+- `/payment/industryPractice/paymentOrder.do`, absent (404)
+- `/payment/rest/3ds/continue.do`, absent (404)
 
 So the conclusion survives the correction: SATIM does not expose wallet,
 recurring or installment payments, and the earlier verdict was right for
